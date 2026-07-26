@@ -675,80 +675,69 @@
     <!-- Watermark avatar in corner -->
     <img src="cyber_avatar.jpg" alt="Avatar watermark" class="watermark-avatar">
 
-    <!-- Matrix Rain Effect -->
-    <canvas id="matrix-left"></canvas>
-    <canvas id="matrix-right"></canvas>
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
 
     <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-        // Matrix rain effect for left and right sides
-        function createMatrixRain(canvasId, side) {
-            const canvas = document.getElementById(canvasId);
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND every
+        // section, so it never runs over text, tags, cards or images. Cards and
+        // badges have their own opaque backgrounds, so the rain only shows in
+        // the gaps and behind plain text; a low opacity keeps text readable.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
             const ctx = canvas.getContext('2d');
 
-            // Set canvas size
-            canvas.width = 150; // Width of the rain column
-            canvas.height = window.innerHeight;
-
-            // Position canvas
             canvas.style.position = 'fixed';
             canvas.style.top = '0';
-            canvas.style[side] = '0';
+            canvas.style.left = '0';
             canvas.style.zIndex = '-1';
             canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4'; // subtle so content stays crisp
 
-            // Matrix characters - mix of katakana, numbers, and symbols
+            // Katakana, digits and symbols for the classic rain look
             const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
             const fontSize = 16;
-            const columns = canvas.width / fontSize;
+            let drops = [];
 
-            // Array to track drop position for each column
-            const drops = [];
-            for (let i = 0; i < columns; i++) {
-                drops[i] = Math.random() * -100; // Start at random heights above canvas
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100; // start above the top at random heights
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
             }
 
             function draw() {
-                // Semi-transparent black to create fade effect
+                // translucent wash of the page bg colour = fading trails
                 ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                // Set text properties
                 ctx.fillStyle = '#00ff88';
                 ctx.font = fontSize + 'px monospace';
 
-                // Draw characters
                 for (let i = 0; i < drops.length; i++) {
                     const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
-                    const x = i * fontSize;
-                    const y = drops[i] * fontSize;
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
 
-                    // Brightest at the head
-                    if (drops[i] * fontSize > 0 && drops[i] * fontSize < canvas.height) {
-                        ctx.fillStyle = '#00ff88';
-                        ctx.fillText(char, x, y);
-                    }
-
-                    // Reset drop when it goes off screen
-                    if (y > canvas.height && Math.random() > 0.975) {
+                    // recycle a column once it falls off the bottom
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
                         drops[i] = 0;
                     }
-
                     drops[i]++;
                 }
             }
 
-            // Run the animation
+            resize();
             setInterval(draw, 50);
-
-            // Resize handler — keep the rain full-height on window resize
-            window.addEventListener('resize', () => {
-                canvas.height = window.innerHeight;
-            });
-        }
-
-        // Kick off the rain on both sides once the DOM is ready
-        createMatrixRain('matrix-left', 'left');
-        createMatrixRain('matrix-right', 'right');
+            window.addEventListener('resize', resize);
+        })();
     </script>
 </body>
 </html>
