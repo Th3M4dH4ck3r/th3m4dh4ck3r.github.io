@@ -740,6 +740,16 @@
             // Run the animation
             setInterval(draw, 50);
 
-            // Resize handler
+            // Resize handler — keep the rain full-height on window resize
             window.addEventListener('resize', () => {
+                canvas.height = window.innerHeight;
+            });
+        }
+
+        // Kick off the rain on both sides once the DOM is ready
+        createMatrixRain('matrix-left', 'left');
+        createMatrixRain('matrix-right', 'right');
+    </script>
+</body>
+</html>
     
