@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTB: DanglingTree — Dangling ADCS Templates to Domain Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin: 0 8px 8px 0;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .tag.medium {
+    background: rgba(255,176,64,0.14);
+    color: #ffb040;
+    border-color: rgba(255,176,64,0.45);
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .callout.win {
+    background: rgba(0,255,136,0.06);
+    border-left: 3px solid #00ff88;
+    color: #a8e6c0;
+  }
+  .callout b { color: #dfffe9; }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted { color: #888; font-style: italic; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  td .yes { color: #00ff88; font-weight: bold; }
+  td .no  { color: #ff6a4d; font-weight: bold; }
+  .verdict {
+    display: inline-block;
+    margin: 6px 0 0;
+    padding: 6px 14px;
+    border: 1px solid #00ff88;
+    border-radius: 6px;
+    background: rgba(0,255,136,0.08);
+    color: #00ff88;
+    letter-spacing: 1px;
+    font-size: 0.9em;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: DanglingTree — Dangling ADCS Templates to Domain Admin</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag medium">MEDIUM</span>
+  <span class="tag">WINDOWS SERVER 2025</span>
+  <span class="tag">ACTIVE DIRECTORY</span>
+  <span class="tag">ADCS ESC3</span>
+  <span class="tag">STRONG CERT BINDING</span>
+  <span class="tag">CVE-2026-23760</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<div class="verdict">&#9679; ROOTED — FULL DOMAIN COMPROMISE</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>DanglingTree is a Medium-rated Windows Server 2025 domain controller built
+around Active Directory Certificate Services — with a clever twist that gives
+the box its name. The CA advertises certificate <em>template names</em> whose
+backing AD objects have been <strong>deleted</strong>. They dangle: published for
+enrollment, but pointing at nothing. A low-privileged user with the right ACL
+can recreate those objects and revive the templates on the spot.</p>
+
+<p>The chain that follows is a long one, and most of the difficulty lives in the
+final stretch: Server 2025 enforces <strong>Full</strong> certificate binding
+(KB5014754), and the obvious target — Administrator — turns out to be
+<em>unattackable</em> by certificate. The winning move is to stop chasing
+Administrator and forge a certificate for the account nobody thinks to protect:
+the domain controller's own machine account.</p>
+
+<h2>&gt; RECON</h2>
+
+<p>The port scan reads like a stock DC, with one anomaly worth circling:</p>
+
+<table>
+  <tr><th>Port</th><th>Service</th></tr>
+  <tr><td>53 / 88 / 464</td><td>DNS / Kerberos / kpasswd</td></tr>
+  <tr><td>135 / 139 / 445</td><td>RPC / SMB</td></tr>
+  <tr><td>389 / 636 / 3268-9</td><td>LDAP / LDAPS / Global Catalog</td></tr>
+  <tr><td>3389 / 9389</td><td>RDP / AD Web Services</td></tr>
+  <tr><td><strong>6600</strong></td><td><strong>Windows Admin Center (HTTPS gateway)</strong> &larr; unusual</td></tr>
+  <tr><td>5985</td><td>WinRM — <em>filtered</em> (not reachable)</td></tr>
+</table>
+
+<p>WinRM being filtered while a Windows Admin Center gateway sits on 6600 is the
+nudge: whatever credentials we recover, <strong>WAC</strong> is going to be the way onto
+the box, not WinRM.</p>
+
+<h2>&gt; FOOTHOLD — GUEST SHARE TO ANDERSON.W</h2>
+
+<p>SMB allows the guest account, and a non-default <code>IT</code> share is
+guest-readable. Inside sits a rules-of-engagement PDF that leaks a working
+domain credential.</p>
+
+<pre>smbclient -N -L //dc.danglingtree.htb
+#  IT   Disk   (guest READ)
+smbclient -N //dc.danglingtree.htb/IT -c 'get Security/DanglingTree_RoE_Assessment.pdf'
+#  -> anderson.w : R3dT3am@Acc3ss#01</pre>
+
+<p>anderson.w can't WinRM in, but the account is a member of <strong>Remote
+Management Users</strong>, and WAC honours that group. The gateway login is a small
+RSA handshake — fetch a CSRF token, fetch a JWK public key, RSA-OAEP encrypt the
+credential blob, POST it — after which the node PowerShell API executes commands
+directly on the DC. I wrapped that flow into a reusable one-liner
+(<code>wsh.py</code>) used for every on-box action from here on.</p>
+
+<pre>python3 wsh.py 'danglingtree\anderson.w' 'R3dT3am@Acc3ss#01' 'whoami'
+danglingtree\anderson.w      # code exec — but low priv, cannot read the flag</pre>
+
+<h2>&gt; LATERAL — SMARTERMAIL CVE-2026-23760</h2>
+
+<p>Running locally on the box (bound to localhost, firewalled externally) is
+<strong>SmarterMail build 9504</strong>, vulnerable to <strong>CVE-2026-23760</strong> — an
+authentication bypass in the password-reset endpoint. An unauthenticated caller
+can flip <code>IsSysAdmin</code> and seize the mail system administrator, which drives
+credential recovery for the domain user <code>noah.b</code>.</p>
+
+<div class="callout">
+<b>Read-as-any-user without RDP or SeImpersonate.</b> From the WAC PowerShell
+session — which already runs on the DC — call <code>LogonUser()</code> with a recovered
+credential (logon type 2 / interactive), then <code>ImpersonateLoggedOnUser()</code>.
+You can read any file as any user whose password you hold. That is how
+<code>user.txt</code> came off noah.b's desktop — no interactive logon required.
+</div>
+
+<pre>PS&gt; # (inside the WAC session, as anderson) impersonate noah.b and read the flag
+PS&gt; type C:\Users\noah.b\Desktop\user.txt
+<span class="flag-redacted">[user flag captured &#9989;]</span></pre>
+
+<h2>&gt; PIVOT — THE ONE ESCALATION EDGE</h2>
+
+<p>Mapping the domain, exactly one dangerous ACL survives the hardening: the
+<code>support-it</code> group holds <strong>ForceChangePassword</strong> over <code>jake.h</code>, and
+<code>alex.o</code> is support-it's only member. That matters because jake.h is a member
+of <strong>Template_Editors</strong> — the group that owns the certificate-template real
+estate.</p>
+
+<pre>net rpc password jake.h 'W1nterStorm#2026' \
+  -U 'danglingtree.htb/alex.o%SunsetMountainPeak@2025' -S dc.danglingtree.htb
+
+# jake.h is ALSO in Remote Management Users, so WAC works as jake.h too:
+python3 wsh.py 'danglingtree\jake.h' 'W1nterStorm#2026' 'whoami'
+danglingtree\jake.h</pre>
+
+<p>We now have PowerShell on the domain controller as a Template_Editor. Time to
+meet the box's namesake.</p>
+
+<h2>&gt; THE DANGLING TREE</h2>
+
+<p>The CA's <code>certificateTemplates</code> attribute publishes three names —
+<code>RemoteAccessVPN</code>, <code>EmployeeAuthTemplate</code>, <code>VPNUserTemplate</code> — but the AD
+objects those names point to have been <strong>deleted</strong>. They're advertised for
+enrollment, backed by nothing. jake.h holds <strong>CREATE_CHILD</strong> on the templates
+container, so recreating an object under one of those names revives it
+instantly, already published, with whatever settings we choose.</p>
+
+<p>That primitive is enough to stage <strong>ESC3</strong> (enroll-on-behalf-of). Two
+templates are built: an <em>enrollment agent</em> template, and a <em>target</em> template
+that requires an agent signature.</p>
+
+<pre># as jake.h, via WAC:
+@create_tmpl.ps1     # revive EmployeeAuthTemplate
+@set_acl.ps1         # grant jake.h Enroll + GenericAll on it
+@setup_esc3.ps1      # EmployeeAuthTemplate -> Certificate Request Agent EKU (1.3.6.1.4.1.311.20.2.1)
+                     # VPNUserTemplate     -> RA-Signature=1 (requires the agent's signature)
+# -> AGENT_TMPL_OK || TARGET_TMPL_CREATED || TARGET_ACL_OK</pre>
+
+<div class="callout warn">
+A template jake.h <em>creates</em> makes him the owner, but ownership alone does not
+grant WRITE_PROP. Before editing any attribute, grant yourself <code>GenericAll</code> via
+a DACL write (<code>SecurityMasks = Dacl</code>) — the owner can rewrite the DACL — and
+only then edit the properties. This trips up every template edit until you do it.
+</div>
+
+<h2>&gt; THE WALL — STRONG CERTIFICATE BINDING</h2>
+
+<p>Windows Server 2025 enforces <strong>Full</strong> certificate binding (KB5014754). To
+authenticate, a certificate must carry <em>both</em>:</p>
+
+<ol>
+  <li>the target's SID, stamped in the <code>szOID_NTDS_CA_SECURITY_EXT</code>
+      (<code>1.3.6.1.4.1.311.25.2</code>) extension — the <em>strong binding</em>; and</li>
+  <li>a name the KDC can map the account by — a UPN (users) or a DNS name
+      (machines) in the Subject Alternative Name.</li>
+</ol>
+
+<p>Here is the trap. This CA derives <em>both</em> facts from the same directory-path
+lookup, and the two template settings that would grant each half are mutually
+exclusive. Worse, <strong>Administrator has no <code>userPrincipalName</code></strong>, so the
+directory-built SAN comes out empty. Every Administrator certificate I forged
+failed, in two complementary ways:</p>
+
+<table>
+  <tr><th>Certificate</th><th>SID ext</th><th>Mapping SAN</th><th>KDC verdict</th></tr>
+  <tr>
+    <td><b>A</b> — directory-path<br><code>0x80010000</code></td>
+    <td><span class="yes">&#10003; ...-500</span></td>
+    <td><span class="no">&#10007; none (no UPN)</span></td>
+    <td>Name mismatch</td>
+  </tr>
+  <tr>
+    <td><b>B</b> — enrollee-supplies<br><code>0x00010001</code></td>
+    <td><span class="no">&#10007; none</span></td>
+    <td><span class="yes">&#10003; admin@...</span></td>
+    <td>Object SID mismatch</td>
+  </tr>
+  <tr>
+    <td><b>C</b> — target = <b>DC$</b><br><code>0x88000000</code></td>
+    <td><span class="yes">&#10003; ...-1000</span></td>
+    <td><span class="yes">&#10003; dc.danglingtree.htb</span></td>
+    <td><span class="yes">ACCEPTED</span></td>
+  </tr>
+</table>
+
+<div class="callout win">
+<b>The pivot.</b> Administrator is unbeatable here — but privilege isn't only
+Administrator. The <b>DC computer account</b> is a domain controller, and it maps
+by its <code>dNSHostName</code>. The flag <code>SUBJECT_ALT_REQUIRE_DNS</code> (0x08000000) makes the
+CA build that DNS name into the SAN <em>from AD</em> — the same AD-driven path that
+stamps the SID. Both halves, no conflict. So retarget ESC3 from Administrator to
+<b>DC$</b>.
+</div>
+
+<pre># SUBJECT_REQUIRE_DIRECTORY_PATH (0x80000000) | SUBJECT_ALT_REQUIRE_DNS (0x08000000)
+msPKI-Certificate-Name-Flag = -2013265920      # = 0x88000000
+
+@esc3_dc.ps1        # enroll agent cert, then CMC on-behalf-of DANGLINGTREE\DC$
+
+openssl x509 -in dc.pem -noout -text
+  X509v3 Subject Alternative Name:  DNS:dc.danglingtree.htb
+  1.3.6.1.4.1.311.25.2:             S-1-5-21-...-1000        # both halves, one cert</pre>
+
+<h2>&gt; ROOT — BECOMING THE DOMAIN CONTROLLER</h2>
+
+<p>The forged certificate authenticates as DC$. PKINIT first tripped a
+<strong>clock-skew</strong> error — the lab DC ran hours ahead — and without root on the
+attacking host I couldn't reset the system clock. Rather than block, I compiled
+a tiny <code>LD_PRELOAD</code> shim that offsets <code>time()</code> / <code>gettimeofday()</code> /
+<code>clock_gettime()</code> for certipy alone.</p>
+
+<pre>gcc -shared -fPIC -o tshim.so tshim.c -ldl          # no sudo required
+
+LD_PRELOAD=./tshim.so FAKE_OFFSET=25177 \
+  certipy auth -pfx dc_final_np.pfx -username 'dc$' -dc-ip &lt;target&gt;
+[*] Got TGT
+[*] Got hash for 'dc$@danglingtree.htb': ...:795ffe...<span class="flag-redacted">[masked]</span></pre>
+
+<p>A domain-controller account can replicate the directory. Using DC$'s hash we
+DCSync over NTLM (no Kerberos, so no clock skew), lift the Administrator hash,
+and pass it straight back to the DC over SMB.</p>
+
+<pre>secretsdump.py 'danglingtree.htb/dc$@&lt;target&gt;' -hashes :795ffe...<span class="flag-redacted">[masked]</span> \
+  -just-dc-user Administrator
+Administrator:500:aad3b435...:8cacb3...<span class="flag-redacted">[masked]</span>:::
+
+wmiexec.py -hashes :8cacb3...<span class="flag-redacted">[masked]</span> 'danglingtree.htb/Administrator@&lt;target&gt;' \
+  'whoami &amp;&amp; type C:\Users\Administrator\Desktop\root.txt'
+danglingtree\administrator
+<span class="flag-redacted">[root flag captured &#9989;]</span></pre>
+
+<div class="callout win">
+<b>Domain compromised.</b> whoami &rarr; <code>danglingtree\administrator</code> on the DC.
+Both flags captured, Administrator and krbtgt hashes in hand.
+</div>
+
+<h2>&gt; ROADS THAT DIDN'T LEAD OUT</h2>
+
+<p>Half the work on a box like this is disproving the tempting paths. For the
+record, all of these were run down and confirmed dead:</p>
+
+<ul>
+  <li><strong>ESC7</strong> (jake.h has ManageCertificates) — can't force-issue a
+      policy-denied request without ManageCA.</li>
+  <li><strong>ESC13</strong> (OID &rarr; group link) — every universal group is critical
+      (RID &lt; 1000); the <code>msDS-OIDToGroupLink</code> write is refused.</li>
+  <li><strong>ESC1 to Administrator</strong> — the SID/SAN wall above; no single
+      template-flag combo yields both halves for a UPN-less account.</li>
+  <li><strong>Schannel with a SID-only cert</strong> — the LDAPS client-cert bind returns
+      no identity; the DC still needs a mappable name.</li>
+  <li><strong>NTLM relay</strong> — LDAP/SMB signing enforced, web-enroll off,
+      encryption-for-requests on. Comprehensively dead on a hardened 2025 DC.</li>
+  <li><strong>Local exec on the DC</strong> — WDAC blocks unsigned binaries;
+      <code>MachineAccountQuota = 0</code> kills Certifried and new-computer RBCD.</li>
+</ul>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>Guest-readable SMB share leaks a RoE PDF with anderson.w's credentials.</li>
+  <li>anderson.w is in Remote Management Users &rarr; Windows Admin Center on 6600 &rarr; PowerShell on the DC.</li>
+  <li>SmarterMail CVE-2026-23760 auth bypass &rarr; mail sysadmin &rarr; recover noah.b &rarr; impersonate &amp; read <code>user.txt</code>.</li>
+  <li>Sole escalation edge: <code>support-it</code> (alex.o) ForceChangePassword over <code>jake.h</code> (Template_Editors).</li>
+  <li>jake.h's CREATE_CHILD on the templates container revives the <em>dangling</em> templates as an ESC3 agent/target pair.</li>
+  <li>Full strong binding + Administrator's missing UPN make Administrator unbeatable by certificate.</li>
+  <li>Retarget ESC3 at the <b>DC$</b> machine account (name-flag <code>0x88000000</code>) &rarr; a cert with both the SID and a DNS SAN.</li>
+  <li>PKINIT as DC$ (clock-skew handled by an LD_PRELOAD shim) &rarr; DCSync the Administrator hash &rarr; pass-the-hash &rarr; <code>root.txt</code>.</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li><strong>Dangling template names are live ammunition.</strong> A published template name
+      with no backing object is an open invitation to anyone holding CREATE_CHILD on
+      the container — audit <code>certificateTemplates</code> for orphaned references.</li>
+  <li><strong>When the obvious target is unattackable, change targets.</strong> Administrator's
+      lack of a UPN made it certificate-proof under Full binding; the DC machine
+      account, which maps by DNS name, was wide open to the exact same primitive.</li>
+  <li><strong>Machine accounts are privilege too.</strong> A certificate for DC$ is a certificate
+      for a domain controller — straight to DCSync. Don't tunnel-vision on the
+      Administrator user.</li>
+  <li><strong>Strong certificate binding needs BOTH a SID extension and a mapping SAN.</strong>
+      Understanding <em>which</em> template flags produce <em>which</em> half is the whole game
+      on modern (2025) ADCS boxes.</li>
+  <li><strong>Don't let environment friction stop the exploit.</strong> No sudo to fix clock skew?
+      A 20-line <code>LD_PRELOAD</code> time shim kept certipy moving without touching the
+      system clock.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+<br>Flags and hashes are redacted / masked in accordance with Hack The Box's content policy.
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
