@@ -1,0 +1,20 @@
+# Local-only files — never published to th3m4dh4ck3r.com
+
+# Claude Code guidance + settings
+CLAUDE.md
+.claude/
+
+# Operator notes
+DEPLOYMENT_GUIDE.md
+*-writeup.md
+resume.txt
+
+# Raw writeup drafts (<Box>/ folders, capitalized; published pages are lowercase <box>.html)
+/[A-Z]*/
+
+# Previous site versions
+old/
+th3m4dh4ck3r-landing.html
+
+# Certificates — publish deliberately when the Certifications section is built
+certificate-*.pdf
